@@ -33,15 +33,15 @@ enum Flow {
     /// The five onboarding questions, in order. Handoff §3 rows 11–12: one
     /// component, driven by this table.
     static let questions: [OnboardingQuestionSpec] = [
-        .init(kind: .number(range: 13...100, unit: nil),
+        .init(kind: .number(range: 13...100, unit: nil, step: 1),
               question: Copy.Onboarding.ageQuestion,
               hint: Copy.Onboarding.ageHint,
               field: .age),
-        .init(kind: .number(range: 120...220, unit: "cm"),
+        .init(kind: .number(range: 120...220, unit: "cm", step: 1),
               question: Copy.Onboarding.heightQuestion,
               hint: Copy.Onboarding.heightHint,
               field: .height),
-        .init(kind: .number(range: 30...200, unit: "kg"),
+        .init(kind: .number(range: 30...200, unit: "kg", step: 1),
               question: Copy.Onboarding.weightQuestion,
               hint: Copy.Onboarding.weightHint,
               field: .weight,
@@ -59,7 +59,9 @@ enum Flow {
 
 struct OnboardingQuestionSpec {
     enum Kind {
-        case number(range: ClosedRange<Int>, unit: String?, step: Int = 1)
+        // Enum case associated values can't carry default parameter values in
+        // Swift — every call site below passes `step` explicitly.
+        case number(range: ClosedRange<Int>, unit: String?, step: Int)
         case choice([String])
     }
     enum Field { case age, height, weight, activity, goal }
