@@ -26,7 +26,9 @@ jobs:
           brew install xcodegen
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        run: |
+          set -o pipefail
+          xcodegen generate 2>&1 | tee xcodegen.log
 
       - name: Select Xcode
         # Pick whatever the newest installed Xcode is rather than pinning a
@@ -35,6 +37,7 @@ jobs:
 
       - name: Build unsigned .app
         run: |
+          set -o pipefail
           xcodebuild \
             -project Stride.xcodeproj \
             -scheme Stride \
@@ -45,7 +48,26 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            build
+            build 2>&1 | tee xcodebuild.log
+
+      - name: Report build errors
+        # Raw Action logs require sign-in to view. Put the actual compiler
+        # errors in the Job Summary instead, which renders on the public
+        # run page with no auth needed. Whichever log exists is the one
+        # that failed.
+        if: failure()
+        run: |
+          {
+            echo '### Build failure — first errors found'
+            echo '```'
+            if [ -f xcodebuild.log ]; then
+              grep -E "error:" xcodebuild.log -A 4 | head -c 6000
+            fi
+            if [ -f xcodegen.log ]; then
+              cat xcodegen.log | head -c 3000
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package as .ipa
         run: |
