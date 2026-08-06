@@ -20,6 +20,7 @@ targets:
     platform: iOS
     sources:
       - path: Stride
+      - path: Shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stride.app
@@ -46,8 +47,11 @@ targets:
       - path: StrideWidget
       # Shares the plain-SwiftUI design tokens with the app target — no
       # dependency on Models/Copy/Logic, so it compiles standalone here.
-      - path: Stride/Design
-        group: Design
+      # Lives in a top-level Shared/ folder (not nested inside Stride/) —
+      # XcodeGen mis-resolves a cross-target source path that's nested
+      # inside another target's own folder with a `group:` override,
+      # producing a doubled/broken file path at build time.
+      - path: Shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stride.app.widget
