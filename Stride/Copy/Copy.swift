@@ -407,27 +407,5 @@ enum Copy {
     static let goalLabel = "Goal"
 }
 
-// MARK: - Number formatting
-
-extension Int {
-    /// 6,800 — grouped, never abbreviated. The record shows the real number.
-    var formattedSteps: String {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.groupingSeparator = ","
-        return f.string(from: NSNumber(value: self)) ?? "\(self)"
-    }
-
-    /// "four", used where the copy spells small numbers ("Four isn't five.")
-    var spelled: String {
-        let words = ["zero", "one", "two", "three", "four", "five",
-                     "six", "seven", "eight", "nine", "ten"]
-        return (0...10).contains(self) ? words[self] : "\(self)"
-    }
-
-    var ordinal: String {
-        let f = NumberFormatter()
-        f.numberStyle = .ordinal
-        return f.string(from: NSNumber(value: self)) ?? "\(self)"
-    }
-}
+// Number formatting (formattedSteps, spelled, ordinal) lives in
+// Design/NumberFormatting.swift — shared with the widget target.
