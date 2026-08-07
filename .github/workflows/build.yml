@@ -53,6 +53,7 @@ jobs:
             -scheme Stride \
             -configuration Release \
             -archivePath build/Stride.xcarchive \
+            -destination "generic/platform=iOS" \
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
             -authenticationKeyID "$KEY_ID" \
