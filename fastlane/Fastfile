@@ -23,7 +23,7 @@ platform :ios do
         signingStyle: "automatic",
         teamID: ENV["TEAM_ID"]
       },
-      xcargs: "-allowProvisioningUpdates"
+      xcargs: "-allowProvisioningUpdates DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
 
     upload_to_testflight(
