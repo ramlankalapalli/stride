@@ -15,7 +15,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    # Apple's validation server now requires apps be built with the iOS 26
+    # SDK (Xcode 26+). macos-14 only has Xcode up to 16.2 installed —
+    # macos-latest tracks GitHub's newest image, which stays current with
+    # new Xcode releases much sooner.
+    runs-on: macos-latest
     env:
       KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
       ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -51,6 +55,11 @@ jobs:
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
 
       - name: Build and upload to TestFlight
+        # Safety net: if this genuinely hangs (as opposed to just being
+        # slow), fail it well before GitHub's multi-hour default timeout so
+        # it doesn't sit stuck for hours unnoticed — this happened once
+        # already (codesign waiting on an unreachable keychain prompt).
+        timeout-minutes: 15
         run: |
           set -o pipefail
           fastlane ios beta 2>&1 | tee fastlane.log
@@ -58,7 +67,9 @@ jobs:
       - name: Report build errors
         # Raw Action logs require sign-in to view. Put the actual error in
         # the Job Summary instead, which renders on the public run page with
-        # no auth needed.
+        # no auth needed. Runs on timeout too (counts as failure), and
+        # includes the MARK progress lines so a hang shows exactly which
+        # step it never got past.
         if: failure()
         run: |
           {
@@ -66,7 +77,9 @@ jobs:
             echo '```'
             for f in fastlane.log xcodegen.log; do
               if [ -f "$f" ]; then
-                echo "--- $f ---"
+                echo "--- $f progress markers ---"
+                grep "MARK:" "$f" || echo "(no MARK lines reached)"
+                echo "--- $f errors ---"
                 grep -iE "error|failed" "$f" -A 3 | tail -c 4000
               fi
             done
