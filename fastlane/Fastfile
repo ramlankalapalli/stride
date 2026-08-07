@@ -35,9 +35,12 @@ platform :ios do
     # into the project file, and xcargs can't express "different profile per
     # target" — so do it explicitly. Confirmed via a debug run that match
     # sets these exact ENV keys: sigh_<bundle id>_appstore_profile-path.
+    # target_filter is a regex — plain "Stride" also matches "StrideWidget"
+    # as a substring, which was silently corrupting the widget's settings
+    # right before the next call fixed them again. Anchor it.
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
-      target_filter: "Stride",
+      target_filter: "^Stride$",
       profile: ENV["sigh_#{app_id}_appstore_profile-path"],
       build_configuration: "Release",
       code_signing_identity: "Apple Distribution"
