@@ -1,57 +1,55 @@
-# Getting Stride onto your iPhone — no Mac required
+# Getting Stride onto your iPhone — via TestFlight
 
-Free path: GitHub builds it, AltStore puts it on your phone. ~15 minutes the
-first time, automatic after that.
+This project moved off the free AltStore/AltServer sideloading path (fought
+Windows driver conflicts for a while — see git history if curious) to proper
+TestFlight distribution instead. Requires the paid Apple Developer Program
+($99/year, already enrolled — see `APPLE_DEVELOPER.md` for account details).
 
-## One-time setup
+## One-time setup (already done)
 
-1. **Push this folder to a GitHub repo** (if it isn't already):
-   ```bash
-   git init
-   git add .
-   git commit -m "Stride: initial scaffold"
-   git remote add origin https://github.com/<you>/stride.git
-   git push -u origin main
-   ```
-2. **On your iPhone**: install the AltStore app.
-   - Go to `altstore.io` in Safari on the phone, follow their installer — it
-     walks you through trusting the AltStore profile in Settings.
-3. **On this Windows laptop**: install **AltServer** from the same site
-   (`altstore.io` → Windows download). Run it — it sits in the system tray.
-4. **Connect the two**: plug the iPhone into this laptop with a USB cable (or
-   put both on the same Wi-Fi network), then in AltServer's tray icon choose
-   *Install AltStore* → select your iPhone. It'll ask for your **Apple ID** —
-   any free Apple ID works, this is not the paid developer program. AltServer
-   uses it to get you a free, personal signing certificate.
+1. Apple Developer Program enrollment
+2. Two App IDs registered (`com.ramlankalapalli.stride` and
+   `.widget`) — see `APPLE_DEVELOPER.md`
+3. App created in App Store Connect (`Stride RL`)
+4. App Store Connect API key generated, stored as GitHub secrets
+5. `.github/workflows/build.yml` signs and uploads automatically on every
+   push to `main`
 
-## Every time you want a new build on your phone
+Nothing above needs repeating unless the API key gets revoked/rotated.
 
-1. **Get the build**: after a push to `main`, GitHub Actions runs
-   automatically (check the *Actions* tab of the repo). When it's green,
-   open the run → download the `Stride-unsigned` artifact → unzip it to get
-   `Stride.ipa`.
-   - Or trigger it manually: Actions tab → "Build sideloadable IPA" →
-     *Run workflow*.
-2. **Install it**: with AltServer running in the tray and the phone
-   connected, right-click the tray icon → *Install .ipa* → pick the phone →
-   select `Stride.ipa`. It signs and pushes it over in under a minute.
-3. Open the app on the phone like any other app.
+## Every time there's a new build
 
-## The 7-day catch
+1. Push to `main` (or trigger manually: Actions tab → "Build and publish to
+   TestFlight" → *Run workflow*)
+2. GitHub Actions builds, signs, and uploads to TestFlight automatically —
+   takes a few minutes
+3. Apple processes the build (usually a few minutes, occasionally longer the
+   first time)
+4. On the iPhone: open **TestFlight** (install it from the App Store first if
+   it isn't already there) → **Stride RL** shows up under your apps →
+   tap **Install** or **Update**
 
-Apple's free signing certificates expire weekly. AltStore refreshes the app
-automatically in the background *as long as AltServer is running on this
-laptop and the phone is reachable* (USB or same Wi-Fi) at least once every
-7 days. If a week passes with the laptop off, open AltStore on the phone and
-tap *Refresh* once it can see AltServer again.
+No cable, no AltServer, no laptop needed for this part at all — TestFlight
+pulls directly from Apple's servers.
 
-## If the build fails at the signing step
+## If a build fails
 
-HealthKit, Sign in with Apple, and push notifications are entitlements Apple
-normally gates behind the paid $99/year developer program, even for
-sideloading. If AltServer errors out specifically on one of those:
-- Quick fix: comment out that entitlement in `Stride/Stride.entitlements` and
-  rebuild — Core Motion step counting, the whole UI, and local data don't need
-  any of them.
-- Real fix: enroll in the Apple Developer Program later and switch to proper
-  TestFlight distribution — no code changes needed, just different signing.
+Check the failing run's **Summary** page on GitHub (Actions tab → the red ✗
+run) — the workflow prints the actual compiler/signing error there directly,
+since raw Action logs require being signed into GitHub to view.
+
+## Adding capabilities back later
+
+HealthKit, push notifications, Sign in with Apple, and App Groups (for the
+widget) were all skipped when registering the App IDs, to keep the first
+build simple. To add any of them back:
+
+1. App Store Connect (or developer.apple.com) → Identifiers → edit the
+   relevant App ID → enable the capability
+2. Uncomment/re-add the matching entries in `Stride/Stride.entitlements` (or
+   `StrideWidget/StrideWidget.entitlements`) and the `entitlements:
+   properties:` block in `project.yml` — see the `TODO(open)` comment there
+   for what was removed
+3. Push — the next build will pick up the new capability automatically
+   (`-allowProvisioningUpdates` regenerates the provisioning profile to
+   match)
