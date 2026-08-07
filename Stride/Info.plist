@@ -41,6 +41,12 @@
 	<!-- §8: HealthKit, read-only, stepCount only. -->
 	<key>NSHealthShareUsageDescription</key>
 	<string>Stride reads your step count from Health to combine phone and Watch data. Nothing else is read, nothing is written.</string>
+	<!-- Apple's static scan flags any reference to
+	     HKHealthStore.requestAuthorization(toShare:read:) and requires this
+	     key even when the toShare set is empty (StepProvider.swift never
+	     actually writes). -->
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Stride does not write to Health. This is required because the app calls an API that could, in principle, request write access — the request itself is always empty.</string>
 
 	<key>UIAppFonts</key>
 	<array>
