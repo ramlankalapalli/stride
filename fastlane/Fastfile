@@ -23,7 +23,11 @@ platform :ios do
         signingStyle: "automatic",
         teamID: ENV["TEAM_ID"]
       },
-      xcargs: "-allowProvisioningUpdates DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
+      xcargs: "-allowProvisioningUpdates " \
+              "-authenticationKeyPath #{ENV['API_KEY_PATH']} " \
+              "-authenticationKeyID #{ENV['KEY_ID']} " \
+              "-authenticationKeyIssuerID #{ENV['ISSUER_ID']} " \
+              "DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
 
     upload_to_testflight(
