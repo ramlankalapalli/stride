@@ -54,6 +54,8 @@ platform :ios do
       code_signing_identity: "Apple Distribution"
     )
 
+    sh("cd .. && xcodebuild -project Stride.xcodeproj -target StrideWidget -configuration Release -showBuildSettings 2>&1 | grep -iE 'code_sign|provisioning_profile' || true")
+
     build_app(
       project: "Stride.xcodeproj",
       scheme: "Stride",
