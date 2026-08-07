@@ -1,0 +1,34 @@
+default_platform(:ios)
+
+# Builds Stride and uploads to TestFlight in one lane. Automatic signing via
+# an App Store Connect API key — no certificates or provisioning profiles
+# committed anywhere. fastlane handles the archive/export/sign dance that
+# raw xcodebuild kept resolving ambiguously (it defaulted to a Development
+# certificate even for an App Store export, which then failed since CI has
+# no registered device).
+platform :ios do
+  desc "Build and upload to TestFlight"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["KEY_ID"],
+      issuer_id: ENV["ISSUER_ID"],
+      key_filepath: ENV["API_KEY_PATH"]
+    )
+
+    build_app(
+      project: "Stride.xcodeproj",
+      scheme: "Stride",
+      export_method: "app-store",
+      export_options: {
+        signingStyle: "automatic",
+        teamID: ENV["TEAM_ID"]
+      },
+      xcargs: "-allowProvisioningUpdates"
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
