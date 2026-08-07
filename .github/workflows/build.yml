@@ -10,6 +10,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write # match needs to push the encrypted certs branch
+
 jobs:
   build:
     runs-on: macos-14
@@ -18,6 +21,8 @@ jobs:
       ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       API_KEY_PATH: /tmp/AuthKey.p8
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
