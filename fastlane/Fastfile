@@ -12,11 +12,14 @@ default_platform(:ios)
 platform :ios do
   desc "Build and upload to TestFlight"
   lane :beta do
+    UI.important("MARK: start #{Time.now}")
+
     api_key = app_store_connect_api_key(
       key_id: ENV["KEY_ID"],
       issuer_id: ENV["ISSUER_ID"],
       key_filepath: ENV["API_KEY_PATH"]
     )
+    UI.important("MARK: got api_key #{Time.now}")
 
     match_git_url = "https://x-access-token:#{ENV['GH_TOKEN']}@github.com/ramlankalapalli/stride.git"
     app_id = "com.ramlankalapalli.stride"
@@ -30,6 +33,7 @@ platform :ios do
       api_key: api_key,
       readonly: false
     )
+    UI.important("MARK: match done #{Time.now}")
 
     # match fetches the cert/profiles but doesn't wire per-target profiles
     # into the project file, and xcargs can't express "different profile per
@@ -45,6 +49,7 @@ platform :ios do
       build_configuration: "Release",
       code_signing_identity: "Apple Distribution"
     )
+    UI.important("MARK: provisioning 1 done #{Time.now}")
 
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
@@ -53,6 +58,7 @@ platform :ios do
       build_configuration: "Release",
       code_signing_identity: "Apple Distribution"
     )
+    UI.important("MARK: provisioning 2 done #{Time.now}")
 
     # Confirmed via a resolved-build-settings dump: update_project_provisioning
     # correctly set PROVISIONING_PROFILE_SPECIFIER per target, but its
@@ -72,10 +78,12 @@ platform :ios do
       },
       xcargs: "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
+    UI.important("MARK: build_app done #{Time.now}")
 
     upload_to_testflight(
       api_key: api_key,
       skip_waiting_for_build_processing: true
     )
+    UI.important("MARK: upload done #{Time.now}")
   end
 end
