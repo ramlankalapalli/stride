@@ -1,11 +1,17 @@
 default_platform(:ios)
 
-# Builds Stride and uploads to TestFlight in one lane. Automatic signing via
-# an App Store Connect API key — no certificates or provisioning profiles
-# committed anywhere. fastlane handles the archive/export/sign dance that
-# raw xcodebuild kept resolving ambiguously (it defaulted to a Development
-# certificate even for an App Store export, which then failed since CI has
-# no registered device).
+# Builds Stride and uploads to TestFlight in one lane. Uses an App Store
+# Connect API key throughout — no certificates or profiles committed
+# anywhere in the repo.
+#
+# Explicitly fetches a Distribution certificate and App Store provisioning
+# profiles up front (cert/sigh), then builds with manual signing pointed at
+# exactly those. Automatic signing during `archive` kept defaulting to a
+# Development certificate no matter what export/method hints were given —
+# and since every CI run is a fresh disposable machine with no local private
+# key, that path could never succeed anyway (each run just found the
+# previous run's now-orphaned Development cert and got stuck). Fetching
+# Distribution assets directly sidesteps that guessing entirely.
 platform :ios do
   desc "Build and upload to TestFlight"
   lane :beta do
@@ -15,19 +21,31 @@ platform :ios do
       key_filepath: ENV["API_KEY_PATH"]
     )
 
+    get_certificates(
+      type: "distribution",
+      api_key: api_key
+    )
+
+    get_provisioning_profile(
+      app_identifier: "com.ramlankalapalli.stride",
+      type: "appstore",
+      api_key: api_key
+    )
+
+    get_provisioning_profile(
+      app_identifier: "com.ramlankalapalli.stride.widget",
+      type: "appstore",
+      api_key: api_key
+    )
+
     build_app(
       project: "Stride.xcodeproj",
       scheme: "Stride",
       export_method: "app-store",
       export_options: {
-        signingStyle: "automatic",
-        teamID: ENV["TEAM_ID"]
+        signingStyle: "manual"
       },
-      xcargs: "-allowProvisioningUpdates " \
-              "-authenticationKeyPath #{ENV['API_KEY_PATH']} " \
-              "-authenticationKeyID #{ENV['KEY_ID']} " \
-              "-authenticationKeyIssuerID #{ENV['ISSUER_ID']} " \
-              "DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
+      xcargs: "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
 
     upload_to_testflight(
