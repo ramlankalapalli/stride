@@ -1,11 +1,10 @@
-name: Build sideloadable IPA
+name: Build and publish to TestFlight
 
-# Builds Stride on GitHub's free macOS runners — no Mac required on your end.
-# Produces an UNSIGNED .ipa as a downloadable artifact. AltServer (running on
-# your Windows laptop) does the actual Apple signing when it installs the app
-# onto your iPhone, using your free Apple ID.
-#
-# Trigger manually from the Actions tab, or on every push to main.
+# Builds Stride on GitHub's free macOS runners, signs it automatically using
+# an App Store Connect API key (no manual certificates/profiles to manage —
+# xcodebuild fetches/creates what it needs), and uploads straight to
+# TestFlight. Install/update the app purely from the TestFlight app on the
+# iPhone — no laptop, no cable, no AltServer.
 on:
   workflow_dispatch:
   push:
@@ -14,6 +13,10 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,51 +38,80 @@ jobs:
         # version — the runner image's bundled version changes over time.
         run: sudo xcode-select -s $(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
 
-      - name: Build unsigned .app
+      - name: Install App Store Connect API key
+        run: |
+          mkdir -p ~/private_keys
+          echo "$APP_STORE_CONNECT_API_KEY_P8" > ~/private_keys/AuthKey_${KEY_ID}.p8
+        env:
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+
+      - name: Archive
         run: |
           set -o pipefail
           xcodebuild \
             -project Stride.xcodeproj \
             -scheme Stride \
-            -sdk iphoneos \
             -configuration Release \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            build 2>&1 | tee xcodebuild.log
+            -archivePath build/Stride.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            archive 2>&1 | tee archive.log
+
+      - name: Export .ipa for TestFlight
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>${TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/Stride.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            2>&1 | tee export.log
+
+      - name: Upload to TestFlight
+        run: |
+          xcrun altool --upload-app \
+            -f build/export/Stride.ipa \
+            -t ios \
+            --apiKey "$KEY_ID" \
+            --apiIssuer "$ISSUER_ID" \
+            2>&1 | tee upload.log
 
       - name: Report build errors
         # Raw Action logs require sign-in to view. Put the actual compiler
         # errors in the Job Summary instead, which renders on the public
-        # run page with no auth needed. Whichever log exists is the one
-        # that failed.
+        # run page with no auth needed. Whichever log exists at the point
+        # of failure is the one that gets shown.
         if: failure()
         run: |
           {
             echo '### Build failure — first errors found'
             echo '```'
-            if [ -f xcodebuild.log ]; then
-              grep -E "error:" xcodebuild.log -A 4 | head -c 6000
-            fi
-            if [ -f xcodegen.log ]; then
-              cat xcodegen.log | head -c 3000
-            fi
+            for f in archive.log export.log upload.log xcodegen.log; do
+              if [ -f "$f" ]; then
+                echo "--- $f ---"
+                grep -E "error:|Error " "$f" -A 4 | head -c 4000
+              fi
+            done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Package as .ipa
-        run: |
-          set -e
-          APP_PATH="build/Build/Products/Release-iphoneos/Stride.app"
-          mkdir -p Payload
-          cp -R "$APP_PATH" Payload/
-          zip -r Stride.ipa Payload
-
-      - name: Upload .ipa
-        uses: actions/upload-artifact@v4
-        with:
-          name: Stride-unsigned
-          path: Stride.ipa
-          retention-days: 14
