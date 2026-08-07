@@ -18,31 +18,45 @@ platform :ios do
       key_filepath: ENV["API_KEY_PATH"]
     )
 
+    match_git_url = "https://x-access-token:#{ENV['GH_TOKEN']}@github.com/ramlankalapalli/stride.git"
+
+    # One app identifier per call — each call's fetched profile path is
+    # captured immediately via the singular shared value before the next
+    # call overwrites it.
     match(
       type: "appstore",
-      app_identifier: ["com.ramlankalapalli.stride", "com.ramlankalapalli.stride.widget"],
-      git_url: "https://x-access-token:#{ENV['GH_TOKEN']}@github.com/ramlankalapalli/stride.git",
+      app_identifier: "com.ramlankalapalli.stride",
+      git_url: match_git_url,
       git_branch: "match-certs",
       api_key: api_key,
       readonly: false
     )
+    app_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH]
+
+    match(
+      type: "appstore",
+      app_identifier: "com.ramlankalapalli.stride.widget",
+      git_url: match_git_url,
+      git_branch: "match-certs",
+      api_key: api_key,
+      readonly: false
+    )
+    widget_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH]
 
     # match fetches the cert/profiles but doesn't wire per-target profiles
     # into the project file — xcargs can't express "different profile per
-    # target" either, so do it explicitly, same as before.
-    profile_paths = lane_context[SharedValues::SIGH_PROFILE_PATHS]
-
+    # target" either, so do it explicitly.
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
       target_filter: "Stride",
-      profile: profile_paths[0],
+      profile: app_profile_path,
       build_configuration: "Release"
     )
 
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
       target_filter: "StrideWidget",
-      profile: profile_paths[1],
+      profile: widget_profile_path,
       build_configuration: "Release"
     )
 
