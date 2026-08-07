@@ -22,7 +22,7 @@ platform :ios do
     )
 
     get_certificates(
-      type: "appstore",
+      development: false,
       api_key: api_key
     )
 
