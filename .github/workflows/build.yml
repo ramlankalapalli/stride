@@ -51,7 +51,6 @@ jobs:
           xcodebuild \
             -project Stride.xcodeproj \
             -scheme Stride \
-            -configuration Release \
             -archivePath build/Stride.xcarchive \
             -destination "generic/platform=iOS" \
             -allowProvisioningUpdates \
@@ -59,7 +58,6 @@ jobs:
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
             CODE_SIGN_STYLE=Automatic \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             archive 2>&1 | tee archive.log
 
