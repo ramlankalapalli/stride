@@ -31,6 +31,8 @@ platform :ios do
       api_key: api_key,
       readonly: false
     )
+    UI.important("DEBUG lane_context after match: #{lane_context.inspect}")
+    UI.important("DEBUG relevant ENV: #{ENV.to_h.select { |k, _| k.downcase.include?('sigh') || k.downcase.include?('match') || k.downcase.include?('profile') }.inspect}")
     app_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH]
 
     match(
