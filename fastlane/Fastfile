@@ -19,46 +19,33 @@ platform :ios do
     )
 
     match_git_url = "https://x-access-token:#{ENV['GH_TOKEN']}@github.com/ramlankalapalli/stride.git"
+    app_id = "com.ramlankalapalli.stride"
+    widget_id = "com.ramlankalapalli.stride.widget"
 
-    # One app identifier per call — each call's fetched profile path is
-    # captured immediately via the singular shared value before the next
-    # call overwrites it.
     match(
       type: "appstore",
-      app_identifier: "com.ramlankalapalli.stride",
+      app_identifier: [app_id, widget_id],
       git_url: match_git_url,
       git_branch: "match-certs",
       api_key: api_key,
       readonly: false
     )
-    UI.important("DEBUG lane_context after match: #{lane_context.inspect}")
-    UI.important("DEBUG relevant ENV: #{ENV.to_h.select { |k, _| k.downcase.include?('sigh') || k.downcase.include?('match') || k.downcase.include?('profile') }.inspect}")
-    app_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH]
-
-    match(
-      type: "appstore",
-      app_identifier: "com.ramlankalapalli.stride.widget",
-      git_url: match_git_url,
-      git_branch: "match-certs",
-      api_key: api_key,
-      readonly: false
-    )
-    widget_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH]
 
     # match fetches the cert/profiles but doesn't wire per-target profiles
-    # into the project file — xcargs can't express "different profile per
-    # target" either, so do it explicitly.
+    # into the project file, and xcargs can't express "different profile per
+    # target" — so do it explicitly. Confirmed via a debug run that match
+    # sets these exact ENV keys: sigh_<bundle id>_appstore_profile-path.
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
       target_filter: "Stride",
-      profile: app_profile_path,
+      profile: ENV["sigh_#{app_id}_appstore_profile-path"],
       build_configuration: "Release"
     )
 
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
       target_filter: "StrideWidget",
-      profile: widget_profile_path,
+      profile: ENV["sigh_#{widget_id}_appstore_profile-path"],
       build_configuration: "Release"
     )
 
@@ -67,7 +54,11 @@ platform :ios do
       scheme: "Stride",
       export_method: "app-store",
       export_options: {
-        signingStyle: "manual"
+        signingStyle: "manual",
+        provisioningProfiles: {
+          app_id => ENV["sigh_#{app_id}_appstore_profile-name"],
+          widget_id => ENV["sigh_#{widget_id}_appstore_profile-name"]
+        }
       },
       xcargs: "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
