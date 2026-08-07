@@ -54,8 +54,11 @@ platform :ios do
       code_signing_identity: "Apple Distribution"
     )
 
-    sh("cd .. && xcodebuild -project Stride.xcodeproj -target StrideWidget -configuration Release -showBuildSettings 2>&1 | grep -iE 'code_sign|provisioning_profile' || true")
-
+    # Confirmed via a resolved-build-settings dump: update_project_provisioning
+    # correctly set PROVISIONING_PROFILE_SPECIFIER per target, but its
+    # code_signing_identity: param silently did not persist — the project
+    # still resolved to "Apple Development". Force it directly on the
+    # archive command instead, which is guaranteed to apply.
     build_app(
       project: "Stride.xcodeproj",
       scheme: "Stride",
@@ -67,7 +70,7 @@ platform :ios do
           widget_id => ENV["sigh_#{widget_id}_appstore_profile-name"]
         }
       },
-      xcargs: "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
+      xcargs: "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
 
     upload_to_testflight(
