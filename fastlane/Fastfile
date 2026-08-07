@@ -39,14 +39,16 @@ platform :ios do
       xcodeproj: "Stride.xcodeproj",
       target_filter: "Stride",
       profile: ENV["sigh_#{app_id}_appstore_profile-path"],
-      build_configuration: "Release"
+      build_configuration: "Release",
+      code_signing_identity: "Apple Distribution"
     )
 
     update_project_provisioning(
       xcodeproj: "Stride.xcodeproj",
       target_filter: "StrideWidget",
       profile: ENV["sigh_#{widget_id}_appstore_profile-path"],
-      build_configuration: "Release"
+      build_configuration: "Release",
+      code_signing_identity: "Apple Distribution"
     )
 
     build_app(
