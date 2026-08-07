@@ -27,6 +27,25 @@ platform :ios do
       readonly: false
     )
 
+    # match fetches the cert/profiles but doesn't wire per-target profiles
+    # into the project file — xcargs can't express "different profile per
+    # target" either, so do it explicitly, same as before.
+    profile_paths = lane_context[SharedValues::SIGH_PROFILE_PATHS]
+
+    update_project_provisioning(
+      xcodeproj: "Stride.xcodeproj",
+      target_filter: "Stride",
+      profile: profile_paths[0],
+      build_configuration: "Release"
+    )
+
+    update_project_provisioning(
+      xcodeproj: "Stride.xcodeproj",
+      target_filter: "StrideWidget",
+      profile: profile_paths[1],
+      build_configuration: "Release"
+    )
+
     build_app(
       project: "Stride.xcodeproj",
       scheme: "Stride",
