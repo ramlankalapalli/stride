@@ -26,15 +26,15 @@ platform :ios do
       api_key: api_key
     )
 
+    # No `type:` param — App Store distribution is the default when
+    # development/adhoc/developer_id are all left unset.
     get_provisioning_profile(
       app_identifier: "com.ramlankalapalli.stride",
-      type: "appstore",
       api_key: api_key
     )
 
     get_provisioning_profile(
       app_identifier: "com.ramlankalapalli.stride.widget",
-      type: "appstore",
       api_key: api_key
     )
 
