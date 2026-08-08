@@ -187,7 +187,7 @@ struct AvatarView: View {
 }
 
 /// The Home avatar, reacting to what's happening right now rather than
-/// staying a static portrait. Three states, chosen deliberately from the
+/// staying a static portrait. Three poses, chosen deliberately from the
 /// existing pose vocabulary — nothing new drawn, nothing borrowed from a
 /// pose that already means something specific elsewhere (raised = milestone
 /// only, slumped = Day 1 only):
@@ -196,12 +196,32 @@ struct AvatarView: View {
 ///   walking — standing, ink, a small steady vertical bob.
 ///   active  — the running pose + speed lines, reused verbatim from Intro
 ///             Slide 1.
+///
+/// Within walking/active, `intensity` (StepProvider.motionIntensity, 0...1)
+/// scales bob height, forward lean and pace continuously — the figure reads
+/// as tracking real effort rather than snapping between three fixed looks.
+/// Pose changes and the intensity-driven properties both animate with
+/// spring physics instead of linear easing, which is what actually reads
+/// as "premium" here — not added ornament.
 struct LiveAvatar: View {
     var activityState: ActivityState
+    var intensity: Double = 0
     var size: CGFloat = 200
     var transforms: Set<UnlockTransform> = []
+    /// Bump to fire the goal-breakthrough reaction: one quick forward
+    /// step-and-settle. Compares against the previous value internally, so
+    /// callers just pass a monotonically increasing counter (AppState's
+    /// goalBreakthroughTick) and never need to reset it.
+    var breakthroughTick: Int = 0
 
     @State private var bob = false
+    @State private var breakthroughPulse = false
+
+    private var clamped: Double { min(1, max(0, intensity)) }
+    private var bobAmplitude: CGFloat { 2.5 + CGFloat(clamped) * 5.5 }   // 2.5...8
+    private var bobDuration: Double { 0.62 - clamped * 0.28 }            // 0.62...0.34, faster with effort
+    private var lean: Double { clamped * 5 }                             // degrees, forward at pace
+    private var runningScale: CGFloat { 1 + clamped * 0.05 }
 
     var body: some View {
         Group {
@@ -211,14 +231,26 @@ struct LiveAvatar: View {
                           strokeColorOverride: .dimmer)
             case .walking:
                 AvatarView(pose: .standing, size: size, transforms: transforms)
-                    .offset(y: bob ? -3 : 3)
-                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: bob)
+                    .rotationEffect(.degrees(bob ? lean : -lean * 0.4), anchor: .bottom)
+                    .offset(y: bob ? -bobAmplitude : bobAmplitude * 0.6)
+                    .animation(.easeInOut(duration: bobDuration).repeatForever(autoreverses: true), value: bob)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: clamped)
             case .active:
                 AvatarView(pose: .running, size: size, transforms: transforms, speedLines: true)
+                    .scaleEffect(runningScale)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.75), value: clamped)
             }
         }
+        .offset(x: breakthroughPulse ? 5 : 0)
+        .scaleEffect(breakthroughPulse ? 1.1 : 1)
+        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: activityState)
         .onAppear { bob = true }
-        .animation(.easeOut(duration: 0.3), value: activityState)
+        .onChange(of: breakthroughTick) { _, _ in
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.45)) { breakthroughPulse = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { breakthroughPulse = false }
+            }
+        }
     }
 }
 

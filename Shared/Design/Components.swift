@@ -191,17 +191,32 @@ struct ProgressTrack: View {
     let fraction: Double
     var live: Bool = true
     var height: CGFloat = 3
+    /// Bump to flash the fill once — the goal-breakthrough moment. Same
+    /// "monotonic counter, compare internally" contract as LiveAvatar's
+    /// breakthroughTick.
+    var pulseTrigger: Int = 0
+
+    @State private var pulseOpacity: Double = 0
 
     var body: some View {
         GeometryReader { geo in
+            let fillWidth = geo.size.width * min(max(fraction, 0), 1)
             ZStack(alignment: .leading) {
                 Rectangle().fill(Color.track)
                 Rectangle()
                     .fill(live ? Color.steel : Color.dim)
-                    .frame(width: geo.size.width * min(max(fraction, 0), 1))
+                    .frame(width: fillWidth)
+                Rectangle()
+                    .fill(Color.ink)
+                    .frame(width: fillWidth)
+                    .opacity(pulseOpacity)
             }
         }
         .frame(height: height)
+        .onChange(of: pulseTrigger) { _, _ in
+            pulseOpacity = 0.85
+            withAnimation(.easeOut(duration: 0.45)) { pulseOpacity = 0 }
+        }
     }
 }
 

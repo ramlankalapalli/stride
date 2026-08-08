@@ -28,6 +28,12 @@ final class AppState: ObservableObject {
     /// Set when a milestone should interrupt. The root view presents it.
     @Published var pendingMilestone: Milestones.Event?
 
+    /// Bumped the instant today's total first crosses the goal — the
+    /// in-the-moment Home screen reaction, distinct from pendingMilestone
+    /// (which only fires for streak/best-day moments and routes to its own
+    /// screen). Not persisted; a transient signal for this launch only.
+    @Published private(set) var goalBreakthroughTick: Int = 0
+
     // MARK: Services
 
     let steps = StepProvider()
@@ -100,6 +106,7 @@ final class AppState: ObservableObject {
         let previousBest = streak.best
         let isFirstEver = streak.totalDaysHit == 0
 
+        goalBreakthroughTick += 1
         user.points += Points.award(for: today, goal: dailyGoal)
 
         var provisional = streak

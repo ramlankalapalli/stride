@@ -31,6 +31,12 @@ final class StepProvider: ObservableObject {
     @Published private(set) var motionAuthorized: Bool = false
     @Published private(set) var healthConnected: Bool = false
     @Published private(set) var activityState: ActivityState = .idle
+    /// Continuous read of how hard the last few seconds were moving, 0...1.
+    /// activityState buckets this into idle/walking/active for pose choice;
+    /// this is the finer-grained signal LiveAvatar uses to scale bob,
+    /// lean and pace so the figure tracks real effort instead of snapping
+    /// between three fixed looks.
+    @Published private(set) var motionIntensity: Double = 0
 
     /// True once HealthKit is the source of truth. The tracking screen uses this
     /// to choose between "Phone sensor — live" and "Phone + Watch — combined".
@@ -111,6 +117,7 @@ final class StepProvider: ObservableObject {
               let oldest = cadenceSamples.first
         else {
             activityState = .idle
+            motionIntensity = 0
             return
         }
 
@@ -122,6 +129,10 @@ final class StepProvider: ObservableObject {
         } else {
             activityState = .idle
         }
+
+        // Same window, read as a continuum rather than three buckets — floor
+        // at the walking threshold, saturate around a brisk jog.
+        motionIntensity = min(1, max(0, (Double(stepsInWindow) - 2) / 28))
     }
 
     /// 24 buckets for the waveform. Core Motion answers one window at a time, so

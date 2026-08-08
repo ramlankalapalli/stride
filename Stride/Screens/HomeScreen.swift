@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // Screen 16. Handoff §6.
 
@@ -35,8 +36,10 @@ struct HomeScreen: View {
                 // The one place on this screen the figure reacts to what's
                 // actually happening right now, not a fixed portrait.
                 LiveAvatar(activityState: app.steps.activityState,
+                          intensity: app.steps.motionIntensity,
                           size: 76,
-                          transforms: app.equipped)
+                          transforms: app.equipped,
+                          breakthroughTick: app.goalBreakthroughTick)
             }
             .padding(.bottom, Space.block)
 
@@ -46,11 +49,12 @@ struct HomeScreen: View {
                         .font(Type.figure(52))
                         .foregroundStyle(Color.ink)
                         .contentTransition(.numericText())
-                        .animation(.default, value: app.todayTotal)
+                        .animation(.spring(response: 0.45, dampingFraction: 0.75), value: app.todayTotal)
                     MonoLabel("/ \(app.dailyGoal.formattedSteps)", size: 13, color: .dim)
                 }
-                ProgressTrack(fraction: app.progressToday, live: !app.goalMetToday)
-                    .animation(.easeOut(duration: 0.4), value: app.progressToday)
+                ProgressTrack(fraction: app.progressToday, live: !app.goalMetToday,
+                             pulseTrigger: app.goalBreakthroughTick)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: app.progressToday)
                 if !app.goalMetToday {
                     MonoLabel(Copy.Home.remaining(app.stepsShortToday), size: 10, color: .dim)
                 }
@@ -119,5 +123,8 @@ struct HomeScreen: View {
             Spacer(minLength: 0)
         }
         .onAppear { app.refreshWeekly() }
+        .onChange(of: app.goalBreakthroughTick) { _, _ in
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        }
     }
 }
