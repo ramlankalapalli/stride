@@ -9,6 +9,15 @@ enum UnlockTransform: String, Codable, CaseIterable, Hashable {
     case heavierLine, longShadow, steelOutline, motionTrail, inverted, thirtyDayMark
 }
 
+/// Live movement state, distinct from the day's cumulative step total.
+/// Drives the Home avatar (LiveAvatar, below) — idle when nothing's
+/// happening right now, walking at a normal cadence, active at a brisk
+/// one. Purely a real-time read, never persisted. Lives here rather than
+/// alongside StepProvider because the widget target compiles this file too.
+enum ActivityState {
+    case idle, walking, active
+}
+
 enum AvatarPose {
     case standing   // home, profile, reveal
     case raised     // milestone celebration
@@ -112,8 +121,13 @@ struct AvatarView: View {
     /// Transforms the user owns and has equipped.
     var transforms: Set<UnlockTransform> = []
     var speedLines: Bool = false
+    /// Overrides the transform-derived color — for live, non-cosmetic states
+    /// (e.g. dimmed while idle) that aren't part of the purchasable unlock
+    /// system and shouldn't be confused with it.
+    var strokeColorOverride: Color?
 
     private var strokeColor: Color {
+        if let strokeColorOverride { return strokeColorOverride }
         if transforms.contains(.inverted) { return .void }
         if transforms.contains(.steelOutline) { return .steel }
         return .ink
@@ -172,6 +186,42 @@ struct AvatarView: View {
     }
 }
 
+/// The Home avatar, reacting to what's happening right now rather than
+/// staying a static portrait. Three states, chosen deliberately from the
+/// existing pose vocabulary — nothing new drawn, nothing borrowed from a
+/// pose that already means something specific elsewhere (raised = milestone
+/// only, slumped = Day 1 only):
+///   idle    — standing, dimmed, still. Matches how dimmer already reads as
+///             "inactive" everywhere else in the app.
+///   walking — standing, ink, a small steady vertical bob.
+///   active  — the running pose + speed lines, reused verbatim from Intro
+///             Slide 1.
+struct LiveAvatar: View {
+    var activityState: ActivityState
+    var size: CGFloat = 200
+    var transforms: Set<UnlockTransform> = []
+
+    @State private var bob = false
+
+    var body: some View {
+        Group {
+            switch activityState {
+            case .idle:
+                AvatarView(pose: .standing, size: size, transforms: transforms,
+                          strokeColorOverride: .dimmer)
+            case .walking:
+                AvatarView(pose: .standing, size: size, transforms: transforms)
+                    .offset(y: bob ? -3 : 3)
+                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: bob)
+            case .active:
+                AvatarView(pose: .running, size: size, transforms: transforms, speedLines: true)
+            }
+        }
+        .onAppear { bob = true }
+        .animation(.easeOut(duration: 0.3), value: activityState)
+    }
+}
+
 #Preview {
     ZStack {
         Color.void.ignoresSafeArea()
@@ -180,6 +230,17 @@ struct AvatarView: View {
             AvatarView(pose: .standing, size: 120)
             AvatarView(pose: .raised, size: 120, transforms: [.steelOutline])
             AvatarView(pose: .running, size: 120, speedLines: true)
+        }
+    }
+}
+
+#Preview("Live states") {
+    ZStack {
+        Color.void.ignoresSafeArea()
+        HStack(spacing: 0) {
+            LiveAvatar(activityState: .idle, size: 120)
+            LiveAvatar(activityState: .walking, size: 120)
+            LiveAvatar(activityState: .active, size: 120)
         }
     }
 }

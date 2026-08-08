@@ -18,6 +18,10 @@ import Combine
 //  5. Manual entries are always additive on top of whichever automatic source is
 //     live, and stay tagged separately.
 
+// ActivityState lives in Shared/Design/AvatarView.swift — LiveAvatar (which
+// the widget target also compiles) needs it, same reason UnlockTransform
+// lives there instead of in Models.
+
 @MainActor
 final class StepProvider: ObservableObject {
 
@@ -26,6 +30,7 @@ final class StepProvider: ObservableObject {
     @Published private(set) var hourly: [Int] = Array(repeating: 0, count: 24)
     @Published private(set) var motionAuthorized: Bool = false
     @Published private(set) var healthConnected: Bool = false
+    @Published private(set) var activityState: ActivityState = .idle
 
     /// True once HealthKit is the source of truth. The tracking screen uses this
     /// to choose between "Phone sensor — live" and "Phone + Watch — combined".
@@ -58,7 +63,15 @@ final class StepProvider: ObservableObject {
                 if !self.healthConnected {
                     self.stepsFromPhone = data.numberOfSteps.intValue
                 }
+                // Cadence tracking runs regardless of HealthKit combining —
+                // it's about right-now movement, not the day's official total.
+                self.recordCadenceSample(data.numberOfSteps.intValue)
             }
+        }
+
+        cadenceTimer?.invalidate()
+        cadenceTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateActivityState() }
         }
 
         Task { await refreshHourlyFromMotion() }
@@ -66,6 +79,46 @@ final class StepProvider: ObservableObject {
 
     func stopPhoneTracking() {
         pedometer.stopUpdates()
+        cadenceTimer?.invalidate()
+        cadenceTimer = nil
+    }
+
+    // MARK: - Cadence / activity state
+
+    private var cadenceSamples: [(date: Date, steps: Int)] = []
+    private var cadenceTimer: Timer?
+
+    private func recordCadenceSample(_ cumulative: Int) {
+        let now = Date()
+        cadenceSamples.append((now, cumulative))
+        cadenceSamples.removeAll { now.timeIntervalSince($0.date) > 45 }
+        updateActivityState()
+    }
+
+    /// Steps-per-minute over a short rolling window. No new callback means
+    /// no motion, so a stale window (nothing in the last 20s) reads as idle
+    /// even though CMPedometer itself only speaks when spoken to.
+    private func updateActivityState() {
+        let now = Date()
+        guard let last = cadenceSamples.last,
+              now.timeIntervalSince(last.date) < 20,
+              let first = cadenceSamples.first,
+              last.date.timeIntervalSince(first.date) >= 5
+        else {
+            activityState = .idle
+            return
+        }
+        let elapsedMinutes = last.date.timeIntervalSince(first.date) / 60
+        let stepsDelta = last.steps - first.steps
+        let stepsPerMinute = elapsedMinutes > 0 ? Double(stepsDelta) / elapsedMinutes : 0
+
+        if stepsPerMinute >= 100 {
+            activityState = .active
+        } else if stepsPerMinute >= 10 {
+            activityState = .walking
+        } else {
+            activityState = .idle
+        }
     }
 
     /// 24 buckets for the waveform. Core Motion answers one window at a time, so

@@ -26,11 +26,19 @@ struct HomeScreen: View {
             }
             .padding(.bottom, Space.section)
 
-            Text(stateLine)
-                .font(Type.archivo(22, .semibold))
-                .foregroundStyle(app.goalMetToday ? Color.ink : Color.dim)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, Space.block)
+            HStack(alignment: .center, spacing: 12) {
+                Text(stateLine)
+                    .font(Type.archivo(22, .semibold))
+                    .foregroundStyle(app.goalMetToday ? Color.ink : Color.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // The one place on this screen the figure reacts to what's
+                // actually happening right now, not a fixed portrait.
+                LiveAvatar(activityState: app.steps.activityState,
+                          size: 76,
+                          transforms: app.equipped)
+            }
+            .padding(.bottom, Space.block)
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .lastTextBaseline, spacing: 10) {
