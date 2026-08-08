@@ -64,5 +64,12 @@
 	<array>
 		<string>com.ramlankalapalli.stride.midnight-rollover</string>
 	</array>
+
+	<!-- Declares encryption use directly instead of leaving it unanswered —
+	     otherwise every single build sits on "Missing Compliance" in App
+	     Store Connect until someone manually answers the same question
+	     again. Stride does no networking and no custom crypto. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
