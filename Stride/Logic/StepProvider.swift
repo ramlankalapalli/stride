@@ -70,7 +70,7 @@ final class StepProvider: ObservableObject {
         }
 
         cadenceTimer?.invalidate()
-        cadenceTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        cadenceTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateActivityState() }
         }
 
@@ -91,31 +91,34 @@ final class StepProvider: ObservableObject {
     private func recordCadenceSample(_ cumulative: Int) {
         let now = Date()
         cadenceSamples.append((now, cumulative))
-        cadenceSamples.removeAll { now.timeIntervalSince($0.date) > 45 }
+        cadenceSamples.removeAll { now.timeIntervalSince($0.date) > 12 }
         updateActivityState()
     }
 
-    /// Steps-per-minute over a short rolling window. No new callback means
-    /// no motion, so a stale window (nothing in the last 20s) reads as idle
-    /// even though CMPedometer itself only speaks when spoken to.
+    /// Absolute step count in a short recent window — deliberately *not* a
+    /// rate. A rate divides by elapsed time, so one or two incidental steps
+    /// (the sensor can register those just from picking up or tapping the
+    /// phone) computed out to a misleadingly high "steps per minute" over a
+    /// tiny sample, and stayed stuck reading as "walking" indefinitely.
+    /// Requiring a real minimum count in the window is far more resistant
+    /// to that. Re-checked every 3s and goes idle within ~6s of the last
+    /// real step, instead of the ~20s lag before.
     private func updateActivityState() {
         let now = Date()
-        guard let last = cadenceSamples.last,
-              now.timeIntervalSince(last.date) < 20,
-              let first = cadenceSamples.first,
-              last.date.timeIntervalSince(first.date) >= 5
+        cadenceSamples.removeAll { now.timeIntervalSince($0.date) > 12 }
+
+        guard let newest = cadenceSamples.last, now.timeIntervalSince(newest.date) < 6,
+              let oldest = cadenceSamples.first
         else {
             activityState = .idle
             return
         }
-        let elapsedMinutes = last.date.timeIntervalSince(first.date) / 60
-        let stepsDelta = last.steps - first.steps
-        let stepsPerMinute = elapsedMinutes > 0 ? Double(stepsDelta) / elapsedMinutes : 0
 
-        if stepsPerMinute >= 100 {
-            activityState = .active
-        } else if stepsPerMinute >= 10 {
-            activityState = .walking
+        let stepsInWindow = newest.steps - oldest.steps
+        if stepsInWindow >= 20 {
+            activityState = .active   // ~100+ steps/min
+        } else if stepsInWindow >= 4 {
+            activityState = .walking  // a handful of real steps, not sensor noise
         } else {
             activityState = .idle
         }
