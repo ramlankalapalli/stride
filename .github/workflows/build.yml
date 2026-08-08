@@ -27,6 +27,11 @@ jobs:
       API_KEY_PATH: /tmp/AuthKey.p8
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # TestFlight rejects an upload whose build number isn't strictly
+      # higher than the last one — the run number always increases, so
+      # using it directly means every push gets a fresh, valid build number
+      # with no state to track in the repo.
+      BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
