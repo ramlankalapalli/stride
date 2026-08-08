@@ -12,6 +12,11 @@ struct HomeScreen: View {
         return Copy.Home.notStarted
     }
 
+    private var sensorLabel: String {
+        if !app.steps.motionAuthorized && !app.steps.healthConnected { return "Waiting for motion access" }
+        return app.steps.isCombined ? Copy.Tracking.combined : Copy.Tracking.phoneOnly
+    }
+
     var body: some View {
         ScreenScaffold(top: 24) {
             HStack {
@@ -32,19 +37,32 @@ struct HomeScreen: View {
                     Text("\(app.todayTotal.formattedSteps)")
                         .font(Type.figure(52))
                         .foregroundStyle(Color.ink)
+                        .contentTransition(.numericText())
+                        .animation(.default, value: app.todayTotal)
                     MonoLabel("/ \(app.dailyGoal.formattedSteps)", size: 13, color: .dim)
                 }
                 ProgressTrack(fraction: app.progressToday, live: !app.goalMetToday)
+                    .animation(.easeOut(duration: 0.4), value: app.progressToday)
                 if !app.goalMetToday {
                     MonoLabel(Copy.Home.remaining(app.stepsShortToday), size: 10, color: .dim)
                 }
             }
-            .padding(.bottom, Space.section)
+            .padding(.bottom, Space.block)
+
+            // Today's shape, not just its total — the same waveform the
+            // detail screen shows, live as the sensor reports in.
+            BarRow(values: app.today.hourlyBreakdown,
+                  peak: app.today.hourlyBreakdown.max() ?? 1,
+                  liveIndex: Calendar.current.component(.hour, from: Date()),
+                  height: 44, spacing: 3)
+                .padding(.bottom, Space.section)
 
             Button { router.push(.stepTracking) } label: {
                 HStack {
-                    MonoLabel(app.steps.isCombined ? Copy.Tracking.combined : Copy.Tracking.phoneOnly,
-                             size: 10, color: .steel)
+                    Circle()
+                        .fill(app.steps.motionAuthorized || app.steps.healthConnected ? Color.steel : Color.dimmer)
+                        .frame(width: 6, height: 6)
+                    MonoLabel(sensorLabel, size: 10, color: .steel)
                     Spacer()
                     MonoLabel("Detail", size: 10, color: .dimmer)
                 }
@@ -66,7 +84,32 @@ struct HomeScreen: View {
             .buttonStyle(.plain)
             Hairline()
 
+            Button { router.push(.weeklyChallenge) } label: {
+                HStack {
+                    MonoLabel("This week", size: 10)
+                    Spacer()
+                    MonoLabel("\(app.weekly.daysHit)/\(app.weekly.target)", size: 10, color: .dim)
+                }
+                .padding(.vertical, 16)
+            }
+            .buttonStyle(.plain)
+            Hairline()
+
+            Button { router.push(.unlocks) } label: {
+                HStack {
+                    MonoLabel("Points banked", size: 10)
+                    Spacer()
+                    Text("\(app.user.points)")
+                        .font(Type.figure(16, medium: true))
+                        .foregroundStyle(Color.ink)
+                }
+                .padding(.vertical, 16)
+            }
+            .buttonStyle(.plain)
+            Hairline()
+
             Spacer(minLength: 0)
         }
+        .onAppear { app.refreshWeekly() }
     }
 }
