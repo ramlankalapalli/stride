@@ -65,4 +65,22 @@ final class DayBoundaryTests: XCTestCase {
         XCTAssertEqual(comps.month, 4)
         XCTAssertEqual(comps.day, 1)
     }
+
+    func test_nextMidnight_crossesYearBoundary() {
+        let cal = calendar
+        let newYearsEve = cal.date(from: DateComponents(year: 2026, month: 12, day: 31, hour: 23, minute: 30))!
+        let next = DayBoundary.nextMidnight(after: newYearsEve, calendar: cal)
+        let comps = cal.dateComponents([.year, .month, .day, .hour], from: next)
+        XCTAssertEqual(comps.year, 2027)
+        XCTAssertEqual(comps.month, 1)
+        XCTAssertEqual(comps.day, 1)
+        XCTAssertEqual(comps.hour, 0)
+    }
+
+    func test_hasRolledOver_acrossYearBoundary() {
+        let cal = calendar
+        let dec31 = cal.date(from: DateComponents(year: 2026, month: 12, day: 31, hour: 23, minute: 59))!
+        let jan1 = cal.date(from: DateComponents(year: 2027, month: 1, day: 1, hour: 0, minute: 1))!
+        XCTAssertTrue(DayBoundary.hasRolledOver(from: dec31, now: jan1, calendar: cal))
+    }
 }

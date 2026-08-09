@@ -109,6 +109,29 @@ final class MovementClassifierTests: XCTestCase {
         XCTAssertNil(snap.movementSessionStartedAt)
     }
 
+    /// A session that ended after a sustained pause must not leave anything
+    /// behind that prevents a clean new session from starting — no stuck
+    /// state, no stale "already in a session" flag.
+    func test_movementResumesCleanly_afterSessionEnds() {
+        var c = MovementClassifier()
+        let t0 = Date()
+        c.record(steps: 0, at: t0)
+        c.record(steps: 5, at: t0.addingTimeInterval(1))
+        _ = c.evaluate(now: t0.addingTimeInterval(1)) // session 1 starts
+
+        let endTime = t0.addingTimeInterval(1 + MotionConfig.sessionEndInactivity + 1)
+        let ended = c.evaluate(now: endTime)
+        XCTAssertFalse(ended.isInMovementSession) // session 1 has ended
+
+        // New movement, well after the first session ended.
+        c.record(steps: 5, at: endTime.addingTimeInterval(1))
+        let resumed = c.evaluate(now: endTime.addingTimeInterval(1))
+
+        XCTAssertTrue(resumed.isInMovementSession)
+        XCTAssertEqual(resumed.movementSessionStartedAt, endTime.addingTimeInterval(1))
+        XCTAssertEqual(resumed.activityState, .walking)
+    }
+
     func test_reset_clearsAllState() {
         var c = MovementClassifier()
         let t0 = Date()
