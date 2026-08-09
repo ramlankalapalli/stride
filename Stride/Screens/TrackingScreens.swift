@@ -1,11 +1,16 @@
 import SwiftUI
 
 // Screens 17-18. Handoff §5, §6.
+//
+// Product decision (Phase 1.1 prep): Stride is an automatic-movement
+// product — manual step entry has been removed from the experience
+// entirely. Automatic sensor/Health sources are the sole source of truth
+// for everything competitive or reward-bearing. See CreditedSteps.swift and
+// AppState.swift for the model-layer side of this.
 
 struct StepTrackingScreen: View {
     @EnvironmentObject private var router: Router
     @EnvironmentObject private var app: AppState
-    @State private var manualEntry = ""
 
     var body: some View {
         ScreenScaffold(top: 20) {
@@ -30,8 +35,8 @@ struct StepTrackingScreen: View {
                   liveIndex: Calendar.current.component(.hour, from: Date()), height: 100)
                 .padding(.bottom, Space.block)
 
-            VStack(alignment: .leading, spacing: 12) {
-                if app.steps.isCombined {
+            if app.steps.isCombined {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         MonoLabel(Copy.Tracking.fromPhone(app.today.stepsFromPhone), size: 11)
                         Spacer()
@@ -41,14 +46,8 @@ struct StepTrackingScreen: View {
                         Spacer()
                     }
                 }
-                if app.today.stepsManualAdd > 0 {
-                    HStack {
-                        MonoLabel(Copy.Tracking.manual(app.today.stepsManualAdd), size: 11, color: .dimmer)
-                        Spacer()
-                    }
-                }
+                .padding(.bottom, Space.block)
             }
-            .padding(.bottom, Space.block)
 
             if !app.steps.isCombined {
                 Button { router.push(.connectWatch) } label: {
@@ -64,23 +63,7 @@ struct StepTrackingScreen: View {
                 Hairline()
             }
 
-            Spacer(minLength: Space.block)
-
-            HStack(spacing: 12) {
-                TextField("Add steps manually", text: $manualEntry)
-                    .keyboardType(.numberPad)
-                    .font(Type.mono(15))
-                    .foregroundStyle(Color.ink)
-                    .padding(.vertical, 14)
-                Button("Add") {
-                    if let n = Int(manualEntry) { app.addManualSteps(n) }
-                    manualEntry = ""
-                }
-                .font(Type.archivo(13, .semibold))
-                .foregroundStyle(Color.steel)
-            }
-            Hairline()
-                .padding(.bottom, Space.block)
+            Spacer(minLength: 0)
         }
     }
 }

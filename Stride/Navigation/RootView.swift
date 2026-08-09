@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var router = Router()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -30,6 +31,11 @@ struct RootView: View {
             app.refreshWeekly()
             app.steps.startPhoneTracking()
             if app.isSignedIn { router.enterMain() }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Make sure nothing sitting in the persistence throttle's
+            // trailing-write window is lost if the app gets suspended.
+            if newPhase == .background { app.flushPendingState() }
         }
     }
 
@@ -69,7 +75,9 @@ struct RouteDestination: View {
         case .connectWatch:          ConnectWatchScreen()
         case .record:                RecordScreen()
         case .weeklyChallenge:       WeeklyChallengeScreen()
-        case .milestone(let e):      MilestoneScreen(event: e)
+        // .milestone is not a Route case — see the comment in Route.swift.
+        // MilestoneScreen is still fully in use, just reached exclusively
+        // via AppState.pendingMilestone's fullScreenCover below.
         case .leaderboard:           LeaderboardScreen()
         case .addFriends:            AddFriendsScreen()
         case .unlocks:               UnlocksScreen()
@@ -146,6 +154,9 @@ struct NavBar: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 }
 

@@ -70,6 +70,7 @@ enum Copy {
         static let sentNote = "It expires in fifteen minutes."
         static let spam     = "Spam folder is a real place. We don't control it."
         static let resend   = "Nothing came? Send again"
+        static let continueWithKey = "Got the key? Set a new password"
 
         /// "Check r***@gmail.com. It expires in fifteen minutes."
         static func sentBody(email: String) -> String {
@@ -196,7 +197,6 @@ enum Copy {
 
         static func fromPhone(_ n: Int) -> String { "\(n.formattedSteps) from phone" }
         static func fromWatch(_ n: Int) -> String { "\(n.formattedSteps) from watch" }
-        static func manual(_ n: Int) -> String { "\(n.formattedSteps) typed in" }
     }
 
     enum ConnectWatch {
@@ -349,6 +349,7 @@ enum Copy {
         static let notificationsGroup = "Notifications"
         static let nagMe          = "Nag me"
         static let streakWarnings  = "Streak warnings"
+        static let inactivityNudges = "Tell me when I've gone quiet"
         static let spokenNudges    = "Read them out loud"
 
         static let leavingGroup = "Leaving"

@@ -54,7 +54,7 @@ All four are resolved with a default and marked `// TODO(open):` in code.
 | Item | Default applied | Where |
 |---|---|---|
 | App name | `Stride` | `project.yml`, `Copy.settingsFooter` |
-| Points formula | 100/goal-day, +50 weekly, manual capped at 20% of goal | `Logic/Points.swift` |
+| Points formula | 100/goal-day (automatic steps only), weekly bonus defined but unwired | `Logic/Points.swift` |
 | Motion explainer screen | Built but skipped in the default flow | `Navigation/Route.swift` |
 | Milestone copy beyond 7 | Table for 7/14/21/28/35/50/75/100 + fallback | `Copy/Copy.swift` |
 

@@ -13,12 +13,22 @@ enum Route: Hashable {
     case onboardingQuestion(Int)
     // 13–15
     case reviewAnswers, avatarReveal, firstQuest
-    // 16–18
+    // 16–18 — also tab roots (MainShell instantiates HomeScreen directly for
+    // the .today tab). These cases exist so RouteDestination stays complete
+    // for any future push-based/deep-link entry point, but nothing in the
+    // app currently pushes .home — it's reached by selecting the tab.
     case home, stepTracking, connectWatch
     // 19–21
     case record, weeklyChallenge
-    case milestone(Milestones.Event)
-    // 22–25
+    // Note: the Milestone screen is intentionally NOT a Route case. It's
+    // presented via AppState.pendingMilestone + RootView's
+    // .fullScreenCover(item:), a parallel mechanism independent of the
+    // NavigationStack path — see RootView.swift. A .milestone(Event) case
+    // used to exist here but was never pushed anywhere (confirmed dead);
+    // removed in Phase 1.0.5 rather than left as a second, unused way to
+    // reach the same screen.
+    // 22–25 — .leaderboard and .profile below are also tab roots, same
+    // situation as .home above.
     case leaderboard, addFriends, unlocks, progression
     // 26–28
     case profile, settings, deleteConfirm

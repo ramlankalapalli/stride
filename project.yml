@@ -30,6 +30,12 @@ targets:
     dependencies:
       - target: StrideWidget
         embed: true
+    # Phase 1.0.5: attaches StrideTests to Stride's auto-generated scheme so
+    # `xcodebuild test -scheme Stride` runs the unit tests without a
+    # separate hand-authored scheme file.
+    scheme:
+      testTargets:
+        - StrideTests
     # TODO(open): HealthKit / Sign in with Apple / push / App Groups are
     # dropped for the first TestFlight build — none were enabled on the App
     # ID, and none are load-bearing for the app to run (HealthKit connect
@@ -62,3 +68,18 @@ targets:
     entitlements:
       path: StrideWidget/StrideWidget.entitlements
       properties: {}
+
+  # Phase 1.0.5: the project had zero tests before this. Pure-logic-only —
+  # no UI tests, no CoreMotion/HealthKit hardware dependency, so it runs on
+  # any simulator without special permissions.
+  StrideTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: StrideTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ramlankalapalli.stride.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Stride

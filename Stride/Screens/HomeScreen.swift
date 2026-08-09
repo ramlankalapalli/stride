@@ -52,6 +52,9 @@ struct HomeScreen: View {
                         .animation(.spring(response: 0.45, dampingFraction: 0.75), value: app.todayTotal)
                     MonoLabel("/ \(app.dailyGoal.formattedSteps)", size: 13, color: .dim)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Steps today")
+                .accessibilityValue("\(app.todayTotal) of \(app.dailyGoal)")
                 ProgressTrack(fraction: app.progressToday, live: !app.goalMetToday,
                              pulseTrigger: app.goalBreakthroughTick)
                     .animation(.spring(response: 0.5, dampingFraction: 0.8), value: app.progressToday)
@@ -87,7 +90,10 @@ struct HomeScreen: View {
                 HStack {
                     MonoLabel("Current streak", size: 10)
                     Spacer()
-                    Text("\(app.streak.current)")
+                    // displayedStreak, not the persisted streak — reflects
+                    // today's goal hit immediately instead of lagging until
+                    // the next launch's reconciliation.
+                    Text("\(app.displayedStreak.current)")
                         .font(Type.figure(16, medium: true))
                         .foregroundStyle(Color.ink)
                 }

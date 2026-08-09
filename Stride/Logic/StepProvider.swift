@@ -2,6 +2,7 @@ import Foundation
 import CoreMotion
 import HealthKit
 import Combine
+import UIKit
 
 // Step sources. Handoff §5.
 //
@@ -15,8 +16,9 @@ import Combine
 //     CMPedometer is only the fallback.
 //  4. The phone/watch split shown in the UI comes from HKSource metadata on the
 //     samples — it is never calculated by hand.
-//  5. Manual entries are always additive on top of whichever automatic source is
-//     live, and stay tagged separately.
+//  5. Manual entry has been removed from the product — Stride is an
+//     automatic-movement product. Automatic sensor/Health sources are the
+//     sole source of truth for everything a record here feeds into.
 
 // ActivityState lives in Shared/Design/AvatarView.swift — LiveAvatar (which
 // the widget target also compiles) needs it, same reason UnlockTransform
@@ -38,6 +40,28 @@ final class StepProvider: ObservableObject {
     /// between three fixed looks.
     @Published private(set) var motionIntensity: Double = 0
 
+    // MARK: - Inactivity / session / momentum signals (Phase 1.0.5)
+    //
+    // Foundation only — nothing here is consumed by any view yet. These
+    // exist so a future Momentum/Figure phase has real signals to build on
+    // instead of starting from nothing. See MovementClassifier for the pure
+    // math behind them.
+
+    /// Rising/steady/falling read on `motionIntensity` between ticks.
+    @Published private(set) var movementTrend: MovementTrend = .steady
+    /// A movement session survives short pauses (a stoplight, tying a shoe);
+    /// only a sustained pause ends it — see MotionConfig.sessionEndInactivity.
+    @Published private(set) var isInMovementSession: Bool = false
+    @Published private(set) var movementSessionStartedAt: Date?
+    @Published private(set) var movementSessionDuration: TimeInterval?
+    @Published private(set) var lastMeaningfulMovementAt: Date?
+    /// nil until the first meaningful movement of the session is observed —
+    /// distinct from "0 seconds ago".
+    @Published private(set) var inactiveDuration: TimeInterval?
+    /// Rolling count of seconds spent in walking/active state today — a
+    /// coarse "active minutes" proxy, reset on day rollover.
+    @Published private(set) var activeSecondsToday: TimeInterval = 0
+
     /// True once HealthKit is the source of truth. The tracking screen uses this
     /// to choose between "Phone sensor — live" and "Phone + Watch — combined".
     var isCombined: Bool { healthConnected }
@@ -46,12 +70,69 @@ final class StepProvider: ObservableObject {
     private let health = HKHealthStore()
     private var healthObserver: HKObserverQuery?
 
+    private var classifier = MovementClassifier()
+    private var classifierTimer: Timer?
+    private var hourlyRefreshTimer: Timer?
+    private var midnightTimer: Timer?
+    private var foregroundObserver: NSObjectProtocol?
+
+    /// The local calendar day the live pedometer query is currently rebased
+    /// to. Compared against on every delta and every timer tick to catch a
+    /// midnight rollover while the app stays alive — see
+    /// `rebaseForNewDayIfNeeded`.
+    private var trackingDayStart: Date = DayBoundary.startOfDay()
+
     // MARK: - Core Motion
 
     func startPhoneTracking() {
         guard CMPedometer.isStepCountingAvailable() else { return }
-        let start = Calendar.current.startOfDay(for: Date())
+        trackingDayStart = DayBoundary.startOfDay()
+        beginPedometerUpdates(from: trackingDayStart)
 
+        classifierTimer?.invalidate()
+        classifierTimer = Timer.scheduledTimer(withTimeInterval: MotionConfig.classifierTickInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.classifierTick() }
+        }
+
+        hourlyRefreshTimer?.invalidate()
+        hourlyRefreshTimer = Timer.scheduledTimer(withTimeInterval: MotionConfig.hourlyRefreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refreshCurrentHourOnly() }
+        }
+
+        scheduleMidnightRebase()
+
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.rebaseForNewDayIfNeeded()
+                await self.refreshCurrentHourOnly()
+            }
+        }
+
+        Task { await refreshHourlyFromMotion() }
+    }
+
+    func stopPhoneTracking() {
+        pedometer.stopUpdates()
+        classifierTimer?.invalidate()
+        classifierTimer = nil
+        hourlyRefreshTimer?.invalidate()
+        hourlyRefreshTimer = nil
+        midnightTimer?.invalidate()
+        midnightTimer = nil
+        if let foregroundObserver {
+            NotificationCenter.default.removeObserver(foregroundObserver)
+            self.foregroundObserver = nil
+        }
+    }
+
+    /// The actual query + live-update wiring, factored out so both a fresh
+    /// launch and a midnight rebase can issue it against whatever
+    /// `trackingDayStart` currently is, without duplicating the callback code.
+    private func beginPedometerUpdates(from start: Date) {
         pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, _ in
             guard let self, let data else { return }
             Task { @MainActor in
@@ -65,78 +146,102 @@ final class StepProvider: ObservableObject {
         pedometer.startUpdates(from: start) { [weak self] data, _ in
             guard let self, let data else { return }
             Task { @MainActor in
+                // Guard first: a step arriving right after local midnight
+                // must not be applied against yesterday's query origin.
+                self.rebaseForNewDayIfNeeded()
                 self.motionAuthorized = true
                 if !self.healthConnected {
                     self.stepsFromPhone = data.numberOfSteps.intValue
                 }
                 // Cadence tracking runs regardless of HealthKit combining —
                 // it's about right-now movement, not the day's official total.
-                self.recordCadenceSample(data.numberOfSteps.intValue)
+                self.classifier.record(steps: data.numberOfSteps.intValue)
+                self.publishClassifierSnapshot()
             }
         }
+    }
 
-        cadenceTimer?.invalidate()
-        cadenceTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateActivityState() }
-        }
+    // MARK: - Midnight rollover
 
+    /// Detects a local calendar-day rollover while the app stays alive and
+    /// rebases the pedometer query, the cadence classifier, and the hourly
+    /// waveform for the new day. Without this, `pedometer.startUpdates(from:)`
+    /// keeps reporting a cumulative count from yesterday's origin — since
+    /// AppState.todayKey rolls to a fresh, empty DailyRecord at midnight on
+    /// its own, the next live delta after midnight would otherwise write
+    /// yesterday's large cumulative total into today's fresh record.
+    ///
+    /// Called from three places so the gap between actual midnight and the
+    /// rebase taking effect stays as small as possible without polling
+    /// aggressively: inline in the live-update handler (catches it the
+    /// instant a step arrives), on every classifier timer tick (catches it
+    /// within `MotionConfig.classifierTickInterval` even with zero steps),
+    /// and from a dedicated one-shot timer scheduled for the next midnight
+    /// itself (catches it immediately even with zero steps and no tick
+    /// coincidence).
+    private func rebaseForNewDayIfNeeded(now: Date = Date()) {
+        guard DayBoundary.hasRolledOver(from: trackingDayStart, now: now) else { return }
+        trackingDayStart = DayBoundary.startOfDay(now)
+
+        pedometer.stopUpdates()
+        classifier.reset()
+        activityState = .idle
+        motionIntensity = 0
+        movementTrend = .steady
+        isInMovementSession = false
+        movementSessionStartedAt = nil
+        movementSessionDuration = nil
+        lastMeaningfulMovementAt = nil
+        inactiveDuration = nil
+        activeSecondsToday = 0
+
+        guard !healthConnected else { return }
+        stepsFromPhone = 0
+        hourly = Array(repeating: 0, count: 24)
+        beginPedometerUpdates(from: trackingDayStart)
         Task { await refreshHourlyFromMotion() }
     }
 
-    func stopPhoneTracking() {
-        pedometer.stopUpdates()
-        cadenceTimer?.invalidate()
-        cadenceTimer = nil
-    }
-
-    // MARK: - Cadence / activity state
-
-    private var cadenceSamples: [(date: Date, steps: Int)] = []
-    private var cadenceTimer: Timer?
-
-    private func recordCadenceSample(_ cumulative: Int) {
-        let now = Date()
-        cadenceSamples.append((now, cumulative))
-        cadenceSamples.removeAll { now.timeIntervalSince($0.date) > 12 }
-        updateActivityState()
-    }
-
-    /// Absolute step count in a short recent window — deliberately *not* a
-    /// rate. A rate divides by elapsed time, so one or two incidental steps
-    /// (the sensor can register those just from picking up or tapping the
-    /// phone) computed out to a misleadingly high "steps per minute" over a
-    /// tiny sample, and stayed stuck reading as "walking" indefinitely.
-    /// Requiring a real minimum count in the window is far more resistant
-    /// to that. Re-checked every 3s and goes idle within ~6s of the last
-    /// real step, instead of the ~20s lag before.
-    private func updateActivityState() {
-        let now = Date()
-        cadenceSamples.removeAll { now.timeIntervalSince($0.date) > 12 }
-
-        guard let newest = cadenceSamples.last, now.timeIntervalSince(newest.date) < 6,
-              let oldest = cadenceSamples.first
-        else {
-            activityState = .idle
-            motionIntensity = 0
-            return
+    private func scheduleMidnightRebase() {
+        midnightTimer?.invalidate()
+        let fireDate = DayBoundary.nextMidnight(after: Date())
+        let timer = Timer(fire: fireDate, interval: 0, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebaseForNewDayIfNeeded()
+                self?.scheduleMidnightRebase()
+            }
         }
-
-        let stepsInWindow = newest.steps - oldest.steps
-        if stepsInWindow >= 20 {
-            activityState = .active   // ~100+ steps/min
-        } else if stepsInWindow >= 4 {
-            activityState = .walking  // a handful of real steps, not sensor noise
-        } else {
-            activityState = .idle
-        }
-
-        // Same window, read as a continuum rather than three buckets — floor
-        // at the walking threshold, saturate around a brisk jog.
-        motionIntensity = min(1, max(0, (Double(stepsInWindow) - 2) / 28))
+        RunLoop.main.add(timer, forMode: .common)
+        midnightTimer = timer
     }
+
+    // MARK: - Cadence / activity classification
+
+    private func classifierTick() {
+        rebaseForNewDayIfNeeded()
+        let wasActive = activityState != .idle
+        publishClassifierSnapshot()
+        if wasActive { activeSecondsToday += MotionConfig.classifierTickInterval }
+    }
+
+    private func publishClassifierSnapshot() {
+        let snap = classifier.evaluate()
+        activityState = snap.activityState
+        motionIntensity = snap.motionIntensity
+        movementTrend = snap.trend
+        isInMovementSession = snap.isInMovementSession
+        movementSessionStartedAt = snap.movementSessionStartedAt
+        movementSessionDuration = snap.movementSessionDuration
+        lastMeaningfulMovementAt = snap.lastMeaningfulMovementAt
+        inactiveDuration = snap.inactiveDuration
+    }
+
+    // MARK: - Hourly waveform
 
     /// 24 buckets for the waveform. Core Motion answers one window at a time, so
-    /// this walks the day hour by hour.
+    /// this walks the day hour by hour. Only called once per day boundary
+    /// (launch, midnight rebase) — for keeping the *current* hour fresh
+    /// through the rest of the session, see `refreshCurrentHourOnly`.
     private func refreshHourlyFromMotion() async {
         guard CMPedometer.isStepCountingAvailable() else { return }
         let cal = Calendar.current
@@ -155,6 +260,29 @@ final class StepProvider: ObservableObject {
             buckets[hour] = count
         }
         if !healthConnected { hourly = buckets }
+    }
+
+    /// Re-queries only the current hour's bucket and updates it in place —
+    /// deliberately not a 24-hour re-walk. Historical hours are already
+    /// correct and untouched; this is the fix for the current-hour bar
+    /// otherwise freezing at whatever it was when tracking started. Run on
+    /// a conservative timer (MotionConfig.hourlyRefreshInterval), plus after
+    /// a midnight rebase and after returning to foreground — never on the
+    /// 3s classifier tick.
+    private func refreshCurrentHourOnly() async {
+        guard CMPedometer.isStepCountingAvailable(), !healthConnected else { return }
+        let cal = Calendar.current
+        let now = Date()
+        guard let hourStart = cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: now)) else { return }
+        let hourIndex = cal.component(.hour, from: now)
+        guard hourly.indices.contains(hourIndex) else { return }
+
+        let count: Int = await withCheckedContinuation { cont in
+            pedometer.queryPedometerData(from: hourStart, to: now) { data, _ in
+                cont.resume(returning: data?.numberOfSteps.intValue ?? 0)
+            }
+        }
+        hourly[hourIndex] = count
     }
 
     // MARK: - HealthKit
@@ -190,7 +318,10 @@ final class StepProvider: ObservableObject {
     }
 
     /// Splits today's HealthKit steps by source. The breakdown lines in the UI
-    /// are read off HKSource metadata, never derived.
+    /// are read off HKSource metadata, never derived. Always predicated on
+    /// `cal.startOfDay(for: Date())` freshly computed each call, so unlike
+    /// the CMPedometer path this is naturally safe across a midnight
+    /// rollover with no rebase logic needed.
     private func refreshFromHealth() async {
         guard let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return }
         let cal = Calendar.current

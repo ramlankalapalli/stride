@@ -1,0 +1,82 @@
+name: Verify (build + test, no TestFlight)
+
+# Verification-only path: generates the Xcode project, builds Stride for an
+# iOS Simulator, and runs the StrideTests unit test target. Never archives,
+# never signs for distribution, never touches fastlane/match/App Store
+# Connect, and never uploads to TestFlight — deliberately a separate
+# workflow from build.yml (which uploads to TestFlight on every push to
+# main) so a verification run can never trigger a release as a side effect.
+#
+# Not wired to `push: branches: [main]` on purpose, for the same reason —
+# trigger it by hand (workflow_dispatch) or on a pull request.
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+          brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          set -o pipefail
+          xcodegen generate 2>&1 | tee xcodegen.log
+
+      - name: Select Xcode
+        run: sudo xcode-select -s $(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+
+      # No -destination device is hardcoded to a specific simulator name —
+      # names/availability drift across Xcode versions. This picks whatever
+      # iPhone simulator the runner's currently-selected Xcode actually has.
+      - name: Pick an available iPhone simulator
+        id: sim
+        run: |
+          NAME=$(xcrun simctl list devices available iPhone -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+              names=[dev['name'] for runtime in d.values() for dev in runtime if dev.get('isAvailable', True)]; \
+              print(names[-1] if names else '')")
+          if [ -z "$NAME" ]; then echo "No available iPhone simulator found"; exit 1; fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $NAME"
+
+      - name: Build for iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Stride.xcodeproj \
+            -scheme Stride \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log
+
+      - name: Run StrideTests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Stride.xcodeproj \
+            -scheme Stride \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee test.log
+
+      - name: Report failure details
+        if: failure()
+        run: |
+          {
+            echo '### Verify failure — last errors found'
+            echo '```'
+            for f in test.log build.log xcodegen.log; do
+              if [ -f "$f" ]; then
+                echo "--- $f errors ---"
+                grep -iE "error:|failed|FAIL" "$f" -A 3 | tail -c 4000
+              fi
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
