@@ -160,31 +160,42 @@ struct FigureLabScreen: View {
         ZStack {
             if manualMode {
                 TimelineView(.periodic(from: .now, by: MotionConfig.activeFrameInterval)) { timeline in
-                    let dt = clock.lastRealDate.map { timeline.date.timeIntervalSince($0) } ?? 0
-                    clock.lastRealDate = timeline.date
-                    let hz = manualGait.energy > 0.01 ? max(0.1, manualGait.cadence / 60 / 2) : 0
-                    var phase = clock.manualPhase + hz * dt * playbackSpeed
-                    phase = phase.truncatingRemainder(dividingBy: 1)
-                    clock.manualPhase = phase
-                    var rendered = manualGait
-                    rendered.phase = phase
-                    RigFigureShape(joints: FigureRig.joints(for: rendered))
-                        .stroke(Color.ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                    figureStroke(joints: manualJoints(at: timeline.date))
                 }
             } else {
                 TimelineView(.periodic(from: .now, by: refreshInterval)) { timeline in
-                    let dt = clock.lastRealDate.map { timeline.date.timeIntervalSince($0) } ?? 0
-                    clock.lastRealDate = timeline.date
-                    clock.syntheticDate = clock.syntheticDate.addingTimeInterval(dt * playbackSpeed)
-                    let g = box.engine.update(currentInputs, now: clock.syntheticDate)
-                    RigFigureShape(joints: FigureRig.joints(for: g))
-                        .stroke(Color.ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                    figureStroke(joints: engineJoints(at: timeline.date))
                 }
             }
         }
         .frame(width: 220, height: 220)
         .frame(maxWidth: .infinity)
         .background(Color.track)
+    }
+
+    private func figureStroke(joints: FigureJoints) -> some View {
+        RigFigureShape(joints: joints)
+            .stroke(Color.ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+    }
+
+    private func manualJoints(at now: Date) -> FigureJoints {
+        let dt = clock.lastRealDate.map { now.timeIntervalSince($0) } ?? 0
+        clock.lastRealDate = now
+        let hz = manualGait.energy > 0.01 ? max(0.1, manualGait.cadence / 60 / 2) : 0
+        var phase = clock.manualPhase + hz * dt * playbackSpeed
+        phase = phase.truncatingRemainder(dividingBy: 1)
+        clock.manualPhase = phase
+        var rendered = manualGait
+        rendered.phase = phase
+        return FigureRig.joints(for: rendered)
+    }
+
+    private func engineJoints(at now: Date) -> FigureJoints {
+        let dt = clock.lastRealDate.map { now.timeIntervalSince($0) } ?? 0
+        clock.lastRealDate = now
+        clock.syntheticDate = clock.syntheticDate.addingTimeInterval(dt * playbackSpeed)
+        let g = box.engine.update(currentInputs, now: clock.syntheticDate)
+        return FigureRig.joints(for: g)
     }
 
     // MARK: - Debug readout
