@@ -186,26 +186,70 @@ struct AvatarView: View {
     }
 }
 
-/// The Home avatar, reacting to what's happening right now rather than
-/// staying a static portrait. Three poses, chosen deliberately from the
-/// existing pose vocabulary — nothing new drawn, nothing borrowed from a
-/// pose that already means something specific elsewhere (raised = milestone
-/// only, slumped = Day 1 only):
-///   idle    — standing, dimmed, still. Matches how dimmer already reads as
-///             "inactive" everywhere else in the app.
-///   walking — standing, ink, a small steady vertical bob.
-///   active  — the running pose + speed lines, reused verbatim from Intro
-///             Slide 1.
-///
-/// Within walking/active, `intensity` (StepProvider.motionIntensity, 0...1)
-/// scales bob height, forward lean and pace continuously — the figure reads
-/// as tracking real effort rather than snapping between three fixed looks.
-/// Pose changes and the intensity-driven properties both animate with
-/// spring physics instead of linear easing, which is what actually reads
-/// as "premium" here — not added ornament.
+/// Draws one instant of the procedural rig — the Phase 1.1A replacement for
+/// switching between fixed `FigureShape` poses. Same stroke conventions
+/// (round caps/joins) and the same 120×120 reference box, so it sits
+/// visually consistent with the legacy static poses used elsewhere.
+private struct RigFigureShape: Shape {
+    let joints: FigureJoints
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        func segment(_ a: CGPoint, _ b: CGPoint) {
+            p.move(to: a)
+            p.addLine(to: b)
+        }
+
+        segment(joints.neck, joints.hipCenter)
+        segment(joints.shoulderCenter, joints.leftShoulder)
+        segment(joints.leftShoulder, joints.leftElbow)
+        segment(joints.leftElbow, joints.leftHand)
+        segment(joints.shoulderCenter, joints.rightShoulder)
+        segment(joints.rightShoulder, joints.rightElbow)
+        segment(joints.rightElbow, joints.rightHand)
+        segment(joints.hipCenter, joints.leftHip)
+        segment(joints.leftHip, joints.leftKnee)
+        segment(joints.leftKnee, joints.leftFoot)
+        segment(joints.hipCenter, joints.rightHip)
+        segment(joints.rightHip, joints.rightKnee)
+        segment(joints.rightKnee, joints.rightFoot)
+
+        p.addEllipse(in: CGRect(x: joints.head.x - joints.headRadius,
+                                y: joints.head.y - joints.headRadius,
+                                width: joints.headRadius * 2,
+                                height: joints.headRadius * 2))
+
+        let s = min(rect.width, rect.height) / FigureRig.referenceSize
+        return p.applying(CGAffineTransform(scaleX: s, y: s))
+                .offsetBy(dx: (rect.width - FigureRig.referenceSize * s) / 2,
+                          dy: (rect.height - FigureRig.referenceSize * s) / 2)
+    }
+}
+
+/// Holds the mutable FigureMotionEngine as a reference so LiveAvatar can
+/// advance it from inside a TimelineView tick without mutating `@State`
+/// during a view update (which SwiftUI disallows) — the box itself is only
+/// ever assigned once, into `@State`; everything that changes over time
+/// lives inside it as plain var mutation on a class.
+private final class FigureMotionBox {
+    var engine = FigureMotionEngine()
+}
+
+/// The Home avatar — Phase 1.1A: a continuous procedural rig instead of a
+/// pose switch. There is no discrete "walking pose" vs "running pose"; the
+/// figure is always the same rig, and CASUAL/WALKING/BRISK/RUNNING are just
+/// where the gait parameters land as intensity/cadence rise, eased there by
+/// FigureMotionEngine. Postural states (STILL/RISING/LOCOMOTION/SLOWING/
+/// RECOVERING/RESTLESS/RESTING) decide what the rig is heading toward;
+/// FigureRig only ever renders whatever the engine currently holds.
 struct LiveAvatar: View {
     var activityState: ActivityState
     var intensity: Double = 0
+    var movementTrend: MovementTrend = .steady
+    var isInMovementSession: Bool = false
+    var movementSessionDuration: TimeInterval? = nil
+    var inactiveDuration: TimeInterval? = nil
+    var smoothedCadence: Double = 0
     var size: CGFloat = 200
     var transforms: Set<UnlockTransform> = []
     /// Bump to fire the goal-breakthrough reaction: one quick forward
@@ -214,60 +258,72 @@ struct LiveAvatar: View {
     /// goalBreakthroughTick) and never need to reset it.
     var breakthroughTick: Int = 0
 
-    /// Phase 1.0.5: Reduce Motion support. When on, the repeatForever bob,
-    /// spring overshoot, and breakthrough translation/scale are all
-    /// disabled — state still changes (pose, a restrained opacity dip for
-    /// breakthrough), just without the motion.
+    /// Reduce Motion: no continuous gait cycling, no repeatForever bob, no
+    /// aggressive springs. The rig still reflects the current postural
+    /// state (a single static geometry per tick, no TimelineView clock) and
+    /// a restrained opacity dip stands in for the breakthrough pulse —
+    /// state stays legible without motion carrying it.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var bob = false
+    @State private var box = FigureMotionBox()
     @State private var breakthroughPulse = false
 
-    private var clamped: Double { min(1, max(0, intensity)) }
-    private var bobAmplitude: CGFloat {
-        MotionConfig.bobAmplitudeMin + CGFloat(clamped) * (MotionConfig.bobAmplitudeMax - MotionConfig.bobAmplitudeMin)
+    private var inputs: FigureMotionInputs {
+        FigureMotionInputs(activityState: activityState,
+                           motionIntensity: intensity,
+                           movementTrend: movementTrend,
+                           isInMovementSession: isInMovementSession,
+                           movementSessionDuration: movementSessionDuration,
+                           inactiveDuration: inactiveDuration,
+                           smoothedCadence: smoothedCadence)
     }
-    private var bobDuration: Double {
-        MotionConfig.bobDurationMax - clamped * (MotionConfig.bobDurationMax - MotionConfig.bobDurationMin)
-    }
-    private var lean: Double { clamped * MotionConfig.leanMaxDegrees }
-    private var runningScale: CGFloat { 1 + CGFloat(clamped) * (MotionConfig.runningScaleMax - 1) }
 
     private var stateDescription: String {
-        switch activityState {
-        case .idle:    return "standing still"
-        case .walking: return "walking"
-        case .active:  return "moving briskly"
+        switch box.engine.state {
+        case .still, .resting:  return "standing still"
+        case .rising:           return "starting to move"
+        case .locomotion:       return intensity > 0.6 ? "moving briskly" : "walking"
+        case .slowing:          return "slowing down"
+        case .recovering:       return "settling"
+        case .restless:         return "shifting weight"
         }
+    }
+
+    /// Idle/resting stays cheap; only visible locomotion asks for
+    /// near-frame-rate updates. Read directly off the box (a plain class
+    /// property read, not a state mutation) so it reflects whatever state
+    /// the last tick landed in.
+    private var refreshInterval: Double {
+        switch box.engine.state {
+        case .still, .resting:
+            return MotionConfig.idleFrameInterval
+        case .rising, .recovering, .restless:
+            return MotionConfig.transitionFrameInterval
+        case .locomotion, .slowing:
+            return MotionConfig.activeFrameInterval
+        }
+    }
+
+    private var strokeColor: Color {
+        box.engine.state == .still || box.engine.state == .resting ? .dimmer : .ink
+    }
+
+    private var style: StrokeStyle {
+        let lineWidth: CGFloat = transforms.contains(.heavierLine) ? 3.2 : 2.2
+        return StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
     }
 
     var body: some View {
         Group {
-            switch activityState {
-            case .idle:
-                AvatarView(pose: .standing, size: size, transforms: transforms,
-                          strokeColorOverride: .dimmer)
-            case .walking:
-                if reduceMotion {
-                    // No repeatForever bob — idle/walking/active are already
-                    // told apart by pose and color; that's preserved.
-                    AvatarView(pose: .standing, size: size, transforms: transforms)
-                } else {
-                    AvatarView(pose: .standing, size: size, transforms: transforms)
-                        .rotationEffect(.degrees(bob ? lean : -lean * 0.4), anchor: .bottom)
-                        .offset(y: bob ? -bobAmplitude : bobAmplitude * 0.6)
-                        .animation(.easeInOut(duration: bobDuration).repeatForever(autoreverses: true), value: bob)
-                        .animation(.spring(response: MotionConfig.walkingSpringResponse,
-                                          dampingFraction: MotionConfig.walkingSpringDamping), value: clamped)
+            if reduceMotion {
+                // One static frame per state change, no clock running.
+                let g = box.engine.update(inputs)
+                figure(for: FigureRig.joints(for: g))
+            } else {
+                TimelineView(.periodic(from: .now, by: refreshInterval)) { timeline in
+                    let g = box.engine.update(inputs, now: timeline.date)
+                    figure(for: FigureRig.joints(for: g))
                 }
-            case .active:
-                AvatarView(pose: .running, size: size, transforms: transforms, speedLines: true)
-                    .scaleEffect(reduceMotion ? 1 : runningScale)
-                    .animation(reduceMotion
-                              ? .easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
-                              : .spring(response: MotionConfig.runningSpringResponse,
-                                       dampingFraction: MotionConfig.runningSpringDamping),
-                              value: clamped)
             }
         }
         .offset(x: (!reduceMotion && breakthroughPulse) ? MotionConfig.breakthroughOffsetX : 0)
@@ -275,13 +331,11 @@ struct LiveAvatar: View {
         .opacity(reduceMotion && breakthroughPulse ? 0.6 : 1)
         .animation(reduceMotion
                   ? .easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
-                  : .spring(response: MotionConfig.poseTransitionSpringResponse,
-                           dampingFraction: MotionConfig.poseTransitionSpringDamping),
-                  value: activityState)
+                  : nil,
+                  value: box.engine.state)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Figure")
         .accessibilityValue(stateDescription)
-        .onAppear { bob = true }
         .onChange(of: breakthroughTick) { _, _ in
             let inAnim = reduceMotion
                 ? Animation.easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
@@ -294,6 +348,45 @@ struct LiveAvatar: View {
                 withAnimation(outAnim) { breakthroughPulse = false }
             }
         }
+    }
+
+    @ViewBuilder
+    private func figure(for joints: FigureJoints) -> some View {
+        ZStack {
+            if transforms.contains(.inverted) {
+                Circle().fill(Color.ink)
+            }
+            if transforms.contains(.motionTrail) {
+                ForEach(1...3, id: \.self) { i in
+                    RigFigureShape(joints: joints)
+                        .stroke(effectiveStrokeColor, style: style)
+                        .opacity(0.30 / Double(i))
+                        .offset(x: CGFloat(-7 * i))
+                }
+            }
+            if transforms.contains(.longShadow) {
+                RigFigureShape(joints: joints)
+                    .stroke(effectiveStrokeColor, style: style)
+                    .opacity(0.15)
+                    .transformEffect(CGAffineTransform(a: 1, b: 0, c: 0.45, d: 1, tx: 0, ty: 0))
+                    .offset(x: 6, y: 8)
+            }
+            RigFigureShape(joints: joints)
+                .stroke(effectiveStrokeColor, style: style)
+            if transforms.contains(.thirtyDayMark) {
+                Circle()
+                    .stroke(Color.dimmer, lineWidth: 1)
+                    .padding(2)
+            }
+        }
+        .frame(width: size, height: size)
+        .scaledToFit()
+    }
+
+    private var effectiveStrokeColor: Color {
+        if transforms.contains(.inverted) { return .void }
+        if transforms.contains(.steelOutline) { return .steel }
+        return strokeColor
     }
 }
 

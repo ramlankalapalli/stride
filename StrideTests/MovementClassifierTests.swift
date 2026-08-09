@@ -148,6 +148,106 @@ final class MovementClassifierTests: XCTestCase {
         XCTAssertEqual(resumed.activityState, .walking)
     }
 
+    // MARK: - Cadence (Phase 1.1A)
+
+    func test_cadence_stationary_staysZero() {
+        var c = MovementClassifier()
+        let t0 = Date()
+        c.record(steps: 0, at: t0)
+        let snap = c.evaluate(now: t0)
+        XCTAssertEqual(snap.smoothedCadence, 0)
+    }
+
+    func test_cadence_slowMovement_producesModestReading() {
+        var c = MovementClassifier()
+        let t0 = Date()
+        c.record(steps: 0, at: t0)
+        // 1 step/sec ~= 60 steps/min.
+        for i in 1...8 {
+            c.record(steps: i, at: t0.addingTimeInterval(Double(i)))
+            _ = c.evaluate(now: t0.addingTimeInterval(Double(i)))
+        }
+        let snap = c.evaluate(now: t0.addingTimeInterval(8))
+        XCTAssertGreaterThan(snap.smoothedCadence, 20)
+        XCTAssertLessThan(snap.smoothedCadence, 90)
+    }
+
+    func test_cadence_fasterMovement_readsHigherThanSlow() {
+        var slow = MovementClassifier()
+        var fast = MovementClassifier()
+        let t0 = Date()
+        slow.record(steps: 0, at: t0)
+        fast.record(steps: 0, at: t0)
+        for i in 1...8 {
+            let t = t0.addingTimeInterval(Double(i))
+            slow.record(steps: i, at: t) // ~1 step/sec
+            fast.record(steps: i * 3, at: t) // ~3 steps/sec
+            _ = slow.evaluate(now: t)
+            _ = fast.evaluate(now: t)
+        }
+        let slowSnap = slow.evaluate(now: t0.addingTimeInterval(8))
+        let fastSnap = fast.evaluate(now: t0.addingTimeInterval(8))
+        XCTAssertGreaterThan(fastSnap.smoothedCadence, slowSnap.smoothedCadence)
+    }
+
+    func test_cadence_accelerating_trendsUpward() {
+        var c = MovementClassifier()
+        let t0 = Date()
+        c.record(steps: 0, at: t0)
+        var cumulative = 0
+        var readings: [Double] = []
+        // Ramp from 1 step/sec to 4 steps/sec.
+        for second in 1...6 {
+            cumulative += second
+            let t = t0.addingTimeInterval(Double(second))
+            c.record(steps: cumulative, at: t)
+            readings.append(c.evaluate(now: t).smoothedCadence)
+        }
+        XCTAssertGreaterThan(readings.last!, readings.first!)
+    }
+
+    func test_cadence_decelerating_trendsDownward() {
+        var c = MovementClassifier()
+        let t0 = Date()
+        c.record(steps: 0, at: t0)
+        var cumulative = 0
+        // Establish a brisk cadence first.
+        for second in 1...5 {
+            cumulative += 3
+            let t = t0.addingTimeInterval(Double(second))
+            c.record(steps: cumulative, at: t)
+            _ = c.evaluate(now: t)
+        }
+        let peak = c.evaluate(now: t0.addingTimeInterval(5)).smoothedCadence
+
+        // Then slow to a crawl.
+        for second in 6...10 {
+            cumulative += 1
+            let t = t0.addingTimeInterval(Double(second))
+            c.record(steps: cumulative, at: t)
+            _ = c.evaluate(now: t)
+        }
+        let after = c.evaluate(now: t0.addingTimeInterval(10)).smoothedCadence
+        XCTAssertLessThan(after, peak)
+    }
+
+    func test_cadence_decaysTowardZero_whenSamplesGoStale() {
+        var c = MovementClassifier()
+        let t0 = Date()
+        c.record(steps: 0, at: t0)
+        for i in 1...5 {
+            c.record(steps: i * 2, at: t0.addingTimeInterval(Double(i)))
+            _ = c.evaluate(now: t0.addingTimeInterval(Double(i)))
+        }
+        let peak = c.evaluate(now: t0.addingTimeInterval(5)).smoothedCadence
+        XCTAssertGreaterThan(peak, 0)
+
+        // Long gap, no new samples — should decay well below its peak,
+        // not stay frozen at the last real value.
+        let stale = c.evaluate(now: t0.addingTimeInterval(15)).smoothedCadence
+        XCTAssertLessThan(stale, peak)
+    }
+
     func test_reset_clearsAllState() {
         var c = MovementClassifier()
         let t0 = Date()
