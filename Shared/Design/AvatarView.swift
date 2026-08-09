@@ -200,19 +200,28 @@ struct RigFigureShape: Shape {
             p.addLine(to: b)
         }
 
-        segment(joints.neck, joints.hipCenter)
-        segment(joints.shoulderCenter, joints.leftShoulder)
+        // Spine as a curve rather than a straight line — with the hip and
+        // shoulder lines now counter-rotating, a straight segment between
+        // them is what made the torso read as a rectangle.
+        p.move(to: joints.hipCenter)
+        p.addQuadCurve(to: joints.neck, control: joints.spineControl)
+
+        segment(joints.leftShoulder, joints.rightShoulder)
         segment(joints.leftShoulder, joints.leftElbow)
         segment(joints.leftElbow, joints.leftHand)
-        segment(joints.shoulderCenter, joints.rightShoulder)
         segment(joints.rightShoulder, joints.rightElbow)
         segment(joints.rightElbow, joints.rightHand)
-        segment(joints.hipCenter, joints.leftHip)
+
+        segment(joints.leftHip, joints.rightHip)
         segment(joints.leftHip, joints.leftKnee)
-        segment(joints.leftKnee, joints.leftFoot)
-        segment(joints.hipCenter, joints.rightHip)
+        segment(joints.leftKnee, joints.leftAnkle)
         segment(joints.rightHip, joints.rightKnee)
-        segment(joints.rightKnee, joints.rightFoot)
+        segment(joints.rightKnee, joints.rightAnkle)
+
+        // The one added stroke pair. Small, but it's what gives the Figure
+        // somewhere to stand.
+        segment(joints.leftAnkle, joints.leftToe)
+        segment(joints.rightAnkle, joints.rightToe)
 
         p.addEllipse(in: CGRect(x: joints.head.x - joints.headRadius,
                                 y: joints.head.y - joints.headRadius,
@@ -317,8 +326,7 @@ struct LiveAvatar: View {
         Group {
             if reduceMotion {
                 // One static frame per state change, no clock running.
-                let g = box.engine.update(inputs)
-                figure(for: FigureRig.joints(for: g))
+                figure(for: reducedMotionJoints())
             } else {
                 TimelineView(.periodic(from: .now, by: refreshInterval)) { timeline in
                     let g = box.engine.update(inputs, now: timeline.date)
@@ -348,6 +356,18 @@ struct LiveAvatar: View {
                 withAnimation(outAnim) { breakthroughPulse = false }
             }
         }
+    }
+
+    /// Reduce Motion still advances the postural state machine — the
+    /// Figure's state stays readable — but renders it at a deliberately
+    /// chosen canonical frame rather than wherever the cycle happened to
+    /// stop. Freezing an arbitrary phase lands on awkward mid-swing
+    /// geometry; the canonical phase is the contact frame, which reads as
+    /// a composed stance with one foot forward and both feet down.
+    private func reducedMotionJoints() -> FigureJoints {
+        var gait = box.engine.update(inputs)
+        gait.phase = MotionConfig.reducedMotionCanonicalPhase
+        return FigureRig.joints(for: gait)
     }
 
     @ViewBuilder

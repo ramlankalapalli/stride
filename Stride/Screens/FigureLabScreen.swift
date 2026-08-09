@@ -105,6 +105,75 @@ private final class LabClock {
     var manualPhase: Double = 0
 }
 
+/// Snapshot of the frame currently on screen, for the debug readout.
+/// A class for the same reason LabClock is one — written from inside a
+/// TimelineView tick.
+private final class InspectedFrame {
+    var gait = FigureGaitParameters.neutral
+    var joints = FigureRig.joints(for: .neutral)
+    var duty: Double = 0
+}
+
+/// Ground plane and per-foot contact marks. Figure Lab only — this is never
+/// constructed anywhere in the production view hierarchy.
+private struct LabGroundOverlay: View {
+    let joints: FigureJoints
+    let showJoints: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                Path { p in
+                    let y = groundLineY(in: geo.size)
+                    p.move(to: CGPoint(x: 0, y: y))
+                    p.addLine(to: CGPoint(x: geo.size.width, y: y))
+                }
+                .stroke(Color.steel.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+                // Filled = planted, hollow = swinging.
+                contactMark(at: place(joints.leftAnkle, in: geo.size), planted: joints.leftPlanted)
+                contactMark(at: place(joints.rightAnkle, in: geo.size), planted: joints.rightPlanted)
+
+                if showJoints {
+                    ForEach(Array(jointPoints.enumerated()), id: \.offset) { _, point in
+                        Circle()
+                            .fill(Color.steel.opacity(0.7))
+                            .frame(width: 3, height: 3)
+                            .position(place(point, in: geo.size))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Same scale-and-centre transform RigFigureShape applies, so the
+    /// overlay lines up with the drawn Figure exactly.
+    private func place(_ p: CGPoint, in size: CGSize) -> CGPoint {
+        let scale = min(size.width, size.height) / FigureRig.referenceSize
+        return CGPoint(x: (size.width - FigureRig.referenceSize * scale) / 2 + p.x * scale,
+                       y: (size.height - FigureRig.referenceSize * scale) / 2 + p.y * scale)
+    }
+
+    private func groundLineY(in size: CGSize) -> CGFloat {
+        place(CGPoint(x: 0, y: MotionConfig.groundY), in: size).y
+    }
+
+    private var jointPoints: [CGPoint] {
+        [joints.leftShoulder, joints.rightShoulder, joints.leftElbow, joints.rightElbow,
+         joints.leftHand, joints.rightHand, joints.hipCenter, joints.leftHip, joints.rightHip,
+         joints.leftKnee, joints.rightKnee, joints.leftAnkle, joints.rightAnkle, joints.neck]
+    }
+
+    @ViewBuilder
+    private func contactMark(at point: CGPoint, planted: Bool) -> some View {
+        Circle()
+            .strokeBorder(Color.steel, lineWidth: 1)
+            .background(Circle().fill(planted ? Color.steel : Color.clear))
+            .frame(width: 6, height: 6)
+            .position(point)
+    }
+}
+
 struct FigureLabScreen: View {
     @State private var box = FigureMotionBox()
     @State private var clock = LabClock()
@@ -114,6 +183,11 @@ struct FigureLabScreen: View {
     @State private var manualMode = false
     @State private var manualGait = FigureGaitParameters.neutral
     @State private var sequenceTask: Task<Void, Never>?
+    @State private var showGround = true
+    @State private var showJoints = false
+    /// Whatever was last rendered, kept so the readout below the preview
+    /// reports the exact frame on screen rather than re-deriving it.
+    @State private var inspected = InspectedFrame()
 
     private var refreshInterval: Double {
         switch box.engine.state {
@@ -139,6 +213,10 @@ struct FigureLabScreen: View {
                     playbackSpeedControl
                         .padding(.bottom, Space.block)
 
+                    Toggle("Ground line", isOn: $showGround)
+                        .tint(.steel)
+                    Toggle("Joint markers", isOn: $showJoints)
+                        .tint(.steel)
                     Toggle("Manual gait override", isOn: $manualMode)
                         .tint(.steel)
                         .padding(.bottom, Space.small)
@@ -164,11 +242,11 @@ struct FigureLabScreen: View {
         ZStack {
             if manualMode {
                 TimelineView(.periodic(from: .now, by: MotionConfig.activeFrameInterval)) { timeline in
-                    figureStroke(joints: manualJoints(at: timeline.date))
+                    frameStack(joints: manualJoints(at: timeline.date))
                 }
             } else {
                 TimelineView(.periodic(from: .now, by: refreshInterval)) { timeline in
-                    figureStroke(joints: engineJoints(at: timeline.date))
+                    frameStack(joints: engineJoints(at: timeline.date))
                 }
             }
         }
@@ -177,9 +255,14 @@ struct FigureLabScreen: View {
         .background(Color.track)
     }
 
-    private func figureStroke(joints: FigureJoints) -> some View {
-        RigFigureShape(joints: joints)
-            .stroke(Color.ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+    private func frameStack(joints: FigureJoints) -> some View {
+        ZStack {
+            if showGround {
+                LabGroundOverlay(joints: joints, showJoints: showJoints)
+            }
+            RigFigureShape(joints: joints)
+                .stroke(Color.ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+        }
     }
 
     private func manualJoints(at now: Date) -> FigureJoints {
@@ -191,21 +274,38 @@ struct FigureLabScreen: View {
         clock.manualPhase = phase
         var rendered = manualGait
         rendered.phase = phase
-        return FigureRig.joints(for: rendered)
+        return record(rendered)
     }
 
     private func engineJoints(at now: Date) -> FigureJoints {
         let dt = clock.lastRealDate.map { now.timeIntervalSince($0) } ?? 0
         clock.lastRealDate = now
         clock.syntheticDate = clock.syntheticDate.addingTimeInterval(dt * playbackSpeed)
-        let g = box.engine.update(currentInputs, now: clock.syntheticDate)
-        return FigureRig.joints(for: g)
+        return record(box.engine.update(currentInputs, now: clock.syntheticDate))
+    }
+
+    private func record(_ gait: FigureGaitParameters) -> FigureJoints {
+        let joints = FigureRig.joints(for: gait)
+        inspected.gait = gait
+        inspected.joints = joints
+        inspected.duty = FigureGait.dutyFactor(runBlend: gait.runBlend)
+        return joints
     }
 
     // MARK: - Debug readout
 
-    @ViewBuilder private var debugReadout: some View {
-        let g = manualMode ? manualGait : box.engine.gait
+    /// On its own slow clock: the preview's TimelineView only re-renders
+    /// its own content, so without this the numbers below it would freeze
+    /// at whatever they were when the screen was last laid out.
+    private var debugReadout: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 10)) { _ in
+            readoutBody
+        }
+    }
+
+    @ViewBuilder private var readoutBody: some View {
+        let g = inspected.gait
+        let j = inspected.joints
         VStack(alignment: .leading, spacing: 4) {
             row("state", manualMode ? "manual" : "\(box.engine.state)")
             row("phase", String(format: "%.2f", g.phase))
@@ -213,9 +313,27 @@ struct FigureLabScreen: View {
             row("cadence", String(format: "%.0f", g.cadence))
             row("stride", String(format: "%.1f", g.strideLength))
             row("lean", String(format: "%.1f°", g.forwardLean))
-            row("armSwing", String(format: "%.1f", g.armSwing))
-            row("bob", String(format: "%.1f", g.verticalBob))
+            row("armSwing", String(format: "%.1f°", g.armSwing))
+            row("bob", String(format: "%.2f", g.verticalBob))
             row("energy", String(format: "%.2f", g.energy))
+            row("runBlend", String(format: "%.2f", g.runBlend))
+            row("duty", String(format: "%.2f%@", inspected.duty, inspected.duty < 0.5 ? "  (flight)" : ""))
+            row("contact", contactLabel(j))
+            row("pelvis Y", String(format: "%.1f", j.hipCenter.y))
+            row("L ankle", String(format: "%.1f, %.1f", j.leftAnkle.x, j.leftAnkle.y))
+            row("R ankle", String(format: "%.1f, %.1f", j.rightAnkle.x, j.rightAnkle.y))
+            row("L knee", String(format: "%.1f, %.1f", j.leftKnee.x, j.leftKnee.y))
+            row("R knee", String(format: "%.1f, %.1f", j.rightKnee.x, j.rightKnee.y))
+            row("weightShift", String(format: "%.2f", g.weightShift))
+        }
+    }
+
+    private func contactLabel(_ j: FigureJoints) -> String {
+        switch (j.leftPlanted, j.rightPlanted) {
+        case (true, true):   return "L+R  double"
+        case (true, false):  return "L    stance"
+        case (false, true):  return "R    stance"
+        case (false, false): return "—    flight"
         }
     }
 
@@ -305,11 +423,13 @@ struct FigureLabScreen: View {
         VStack(spacing: 14) {
             slider("intensity", $manualGait.intensity, 0...1)
             slider("cadence", Binding(get: { manualGait.cadence }, set: { manualGait.cadence = $0 }), 0...200)
-            slider("stride", Binding(get: { Double(manualGait.strideLength) }, set: { manualGait.strideLength = CGFloat($0) }), 0...16)
+            slider("stride", Binding(get: { Double(manualGait.strideLength) }, set: { manualGait.strideLength = CGFloat($0) }), 0...30)
             slider("lean", $manualGait.forwardLean, 0...12)
-            slider("armSwing", Binding(get: { Double(manualGait.armSwing) }, set: { manualGait.armSwing = CGFloat($0) }), 0...12)
-            slider("bob", Binding(get: { Double(manualGait.verticalBob) }, set: { manualGait.verticalBob = CGFloat($0) }), 0...10)
+            slider("armSwing°", Binding(get: { Double(manualGait.armSwing) }, set: { manualGait.armSwing = CGFloat($0) }), 0...35)
+            slider("bob", Binding(get: { Double(manualGait.verticalBob) }, set: { manualGait.verticalBob = CGFloat($0) }), 0...4)
             slider("energy", $manualGait.energy, 0...1)
+            slider("runBlend", $manualGait.runBlend, 0...1)
+            slider("weightShift", Binding(get: { Double(manualGait.weightShift) }, set: { manualGait.weightShift = CGFloat($0) }), -4...4)
         }
     }
 

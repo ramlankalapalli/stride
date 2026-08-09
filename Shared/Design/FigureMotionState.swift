@@ -116,6 +116,11 @@ struct FigureMotionEngine {
         gait.verticalBob = lerp(gait.verticalBob, target.verticalBob, alpha)
         gait.energy = lerp(gait.energy, target.energy, alpha)
         gait.cadence = lerp(gait.cadence, target.cadence, alpha)
+        // runBlend rides the same easing as everything else, so the duty
+        // factor crosses 0.5 — and the flight phase opens — gradually.
+        // Nothing anywhere switches on it.
+        gait.runBlend = lerp(gait.runBlend, target.runBlend, alpha)
+        gait.weightShift = lerp(gait.weightShift, target.weightShift, alpha)
 
         let hz = cycleRate(for: state, cadence: gait.cadence)
         var phase = gait.phase + hz * dt
@@ -190,21 +195,35 @@ struct FigureMotionEngine {
         switch state {
         case .still:
             return FigureGaitParameters(phase: previousPhase, intensity: 0, strideLength: 0, cadence: 0,
-                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.stillBreathingBob, energy: 0)
+                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.stillBreathingBob,
+                                        energy: 0, runBlend: 0, weightShift: 0)
 
         case .resting:
             return FigureGaitParameters(phase: previousPhase, intensity: 0, strideLength: 0, cadence: 0,
-                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.restingBob, energy: 0)
+                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.restingBob,
+                                        energy: 0, runBlend: 0, weightShift: 0)
 
         case .restless:
-            return FigureGaitParameters(phase: previousPhase, intensity: 0, strideLength: MotionConfig.restlessShiftAmplitude, cadence: 0,
-                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.stillBreathingBob, energy: 0.15)
+            // A shift of weight, not a step: the pelvis moves laterally and
+            // the feet stay exactly where they are. V1 borrowed strideLength
+            // for this, which under V2's mechanics would literally make the
+            // Figure walk.
+            return FigureGaitParameters(phase: previousPhase, intensity: 0, strideLength: 0, cadence: 0,
+                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.stillBreathingBob,
+                                        energy: 0.15, runBlend: 0,
+                                        weightShift: MotionConfig.restlessWeightShift)
 
         case .rising:
+            // Intent, communicated by taking weight onto one side and
+            // letting the pelvis settle very slightly — negative bob eases
+            // downward. Not a crouch, and no step is taken yet.
             return FigureGaitParameters(phase: previousPhase, intensity: 0.25, strideLength: 0, cadence: 0,
-                                        forwardLean: MotionConfig.risingLeanDegrees, armSwing: 0, verticalBob: MotionConfig.risingBob, energy: 0.25)
+                                        forwardLean: MotionConfig.risingLeanDegrees, armSwing: 0,
+                                        verticalBob: -MotionConfig.risingPelvisSettle, energy: 0.25,
+                                        runBlend: 0, weightShift: MotionConfig.risingWeightShift)
 
         case .locomotion:
+            let blend = FigureGait.runBlend(cadence: inputs.smoothedCadence, intensity: intensity)
             return FigureGaitParameters(
                 phase: previousPhase,
                 intensity: intensity,
@@ -213,29 +232,41 @@ struct FigureMotionEngine {
                 forwardLean: mixD(MotionConfig.forwardLeanMin, MotionConfig.forwardLeanMax, intensity),
                 armSwing: mix(MotionConfig.armSwingMin, MotionConfig.armSwingMax, intensity),
                 verticalBob: mix(MotionConfig.locomotionBobMin, MotionConfig.locomotionBobMax, intensity),
-                energy: max(0.35, intensity)
+                energy: max(0.35, intensity),
+                runBlend: blend,
+                weightShift: 0
             )
 
         case .slowing:
-            // Ease the same locomotion shape down across the release
-            // window rather than jumping straight to idle — this is the
-            // "real deceleration" the product principle asks for.
+            // Real deceleration has a shape: turnover drops away first and
+            // the stride keeps most of its length for a moment, so the last
+            // few steps read as long and heavy rather than as the whole
+            // gait fading out uniformly. Running mechanics let go fastest.
             let decay = max(0, 1 - dwellInState / MotionConfig.slowingReleaseDuration)
+            let cadenceDecay = pow(decay, 1.6)
+            let strideDecay = pow(decay, 0.7)
             return FigureGaitParameters(
                 phase: previousPhase,
                 intensity: intensity * decay,
-                strideLength: mix(MotionConfig.strideLengthMin, MotionConfig.strideLengthMax, intensity) * CGFloat(decay),
-                cadence: inputs.smoothedCadence * decay,
+                strideLength: mix(MotionConfig.strideLengthMin, MotionConfig.strideLengthMax, intensity) * CGFloat(strideDecay),
+                cadence: inputs.smoothedCadence * cadenceDecay,
                 forwardLean: mixD(MotionConfig.forwardLeanMin, MotionConfig.forwardLeanMax, intensity) * decay,
-                armSwing: mix(MotionConfig.armSwingMin, MotionConfig.armSwingMax, intensity) * CGFloat(decay),
+                armSwing: mix(MotionConfig.armSwingMin, MotionConfig.armSwingMax, intensity) * CGFloat(strideDecay),
                 verticalBob: mix(MotionConfig.locomotionBobMin, MotionConfig.locomotionBobMax, intensity) * CGFloat(decay),
-                energy: max(0.15, intensity) * decay
+                energy: max(0.15, intensity) * decay,
+                runBlend: FigureGait.runBlend(cadence: inputs.smoothedCadence, intensity: intensity) * pow(decay, 2),
+                weightShift: 0
             )
 
         case .recovering:
+            // Momentum settling out, not exhaustion: a small residual sway
+            // decaying to nothing, feet already planted.
             let residual = max(0, 1 - dwellInState / MotionConfig.recoveryDuration)
             return FigureGaitParameters(phase: previousPhase, intensity: 0, strideLength: 0, cadence: 0,
-                                        forwardLean: 0, armSwing: 0, verticalBob: MotionConfig.recoveringResidualBob * CGFloat(residual), energy: 0)
+                                        forwardLean: 0, armSwing: 0,
+                                        verticalBob: MotionConfig.recoveringResidualBob * CGFloat(residual),
+                                        energy: 0, runBlend: 0,
+                                        weightShift: MotionConfig.restlessWeightShift * CGFloat(residual) * 0.5)
         }
     }
 
