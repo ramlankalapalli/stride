@@ -119,6 +119,7 @@ enum FigureRig {
         // 2. Pelvis, from whichever leg is loaded — never chosen freely, so
         //    a planted foot can't be pulled off the floor.
         let mechanicalPelvisY = FigureGait.pelvisY(phase: phase, duty: duty, stride: stride,
+                                                   swingHeight: swingHeight,
                                                    runBlend: runBlend, energy: energy)
         let breathing = -p.verticalBob * CGFloat(0.5 - 0.5 * cos(2 * .pi * phase))
         let pelvisY = mechanicalPelvisY + breathing

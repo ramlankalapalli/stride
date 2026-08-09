@@ -150,47 +150,69 @@ enum FigureGait {
         return nil
     }
 
-    /// Pelvis height, derived entirely from whatever is carrying weight.
+    /// Hips sit wider than the line the feet track along, so a leg always
+    /// reaches slightly inboard. Folded into the reach budget as an
+    /// absolute so it is charged against both legs regardless of sign.
+    static var lateralInset: CGFloat { (MotionConfig.hipSpread - MotionConfig.stanceWidth) / 2 }
+
+    /// The lowest the pelvis may sit before a given foot would have to
+    /// stretch to stay where it is. Uses the foot's *actual* position, so a
+    /// swinging foot relaxes the limit smoothly as it lifts and tightens it
+    /// smoothly as it comes back down.
+    ///
+    /// Evaluating both feet this way — rather than only the ones currently
+    /// planted — is what keeps the pelvis continuous through touchdown and
+    /// toe-off. Counting a foot only from the instant it lands makes the
+    /// binding constraint appear all at once, which drops the pelvis a step
+    /// and snaps the knee with it.
+    private static func reachLimit(foot: FootState, runBlend: Double, energy: Double) -> CGFloat {
+        let leg = effectiveLegLength(stanceProgress: foot.stanceProgress, runBlend: runBlend, energy: energy)
+            - MotionConfig.pelvisReachMargin
+        let dx = abs(foot.offset.x) + lateralInset
+        let footY = MotionConfig.anklePlaneY + foot.offset.y
+        return footY - sqrt(max(0, leg * leg - dx * dx))
+    }
+
+    /// Pelvis height, derived entirely from what the legs can actually
+    /// reach.
     ///
     /// This is what guarantees ground contact. The pelvis is never given a
-    /// height of its own that the legs then have to try to satisfy — it is
-    /// placed exactly where the stance leg can reach, so the planted foot
-    /// can never be pulled off the ground or stretched to meet it. When
-    /// both feet are down, the lower of the two candidate heights wins, so
-    /// both legs stay within reach.
-    static func pelvisY(phase: Double, duty: Double, stride: CGFloat, runBlend: Double, energy: Double) -> CGFloat {
+    /// height of its own that the legs then have to satisfy — it is placed
+    /// exactly where the loaded leg can hold it, so a planted foot can
+    /// never be pulled off the ground or stretched to meet it.
+    static func pelvisY(phase: Double, duty: Double, stride: CGFloat, swingHeight: CGFloat,
+                        runBlend: Double, energy: Double) -> CGFloat {
         let phi = normalizedPhase(phase)
-        let half = stride / 2
-        var lowest: CGFloat?
+        var planted = false
+        var limit = -CGFloat.greatestFiniteMagnitude
 
         for footPhase in [phi, normalizedPhase(phi + 0.5)] {
-            guard duty > 0, footPhase < duty else { continue }
-            let s = footPhase / duty
-            let dx = abs(half - stride * CGFloat(s))
-            let leg = effectiveLegLength(stanceProgress: s, runBlend: runBlend, energy: energy)
-            let vertical = sqrt(max(0, leg * leg - dx * dx))
-            let candidate = MotionConfig.anklePlaneY - vertical
-            lowest = max(lowest ?? candidate, candidate)
+            let foot = footState(footPhase: footPhase, duty: duty, stride: stride, swingHeight: swingHeight)
+            if foot.planted { planted = true }
+            limit = max(limit, reachLimit(foot: foot, runBlend: runBlend, energy: energy))
         }
 
-        if let lowest { return lowest }
+        guard !planted, let s = flightProgress(phase: phi, duty: duty) else { return limit }
 
         // Flight. Both ends of this window are a foot at full stride
-        // extension with no absorption flexion, so the arc starts and ends
-        // at exactly the height stance hands over — continuous by
-        // construction, in both directions.
+        // extension on the ground, so the arc starts and ends at exactly
+        // the height stance hands over. Clamped so an airborne leg can
+        // still never over-extend.
         let leg = effectiveLegLength(stanceProgress: 0, runBlend: runBlend, energy: energy)
-        let base = MotionConfig.anklePlaneY - sqrt(max(0, leg * leg - half * half))
-        let s = flightProgress(phase: phi, duty: duty) ?? 0
-        return base - flightRise(duty: duty, energy: energy) * CGFloat(sin(.pi * s))
+            - MotionConfig.pelvisReachMargin
+        let dx = stride / 2 + lateralInset
+        let base = MotionConfig.anklePlaneY - sqrt(max(0, leg * leg - dx * dx))
+        let arc = base - flightRise(duty: duty, energy: energy) * CGFloat(sin(.pi * s))
+        return max(arc, limit)
     }
 
     /// The height the pelvis sits at with no oscillation at all — the anchor
     /// head stabilisation filters against.
     static func referencePelvisY(stride: CGFloat) -> CGFloat {
         let leg = MotionConfig.legLength * CGFloat(1 - MotionConfig.baseStanceFlexion)
-        let half = stride / 2
-        return MotionConfig.anklePlaneY - sqrt(max(0, leg * leg - half * half))
+            - MotionConfig.pelvisReachMargin
+        let dx = stride / 2 + lateralInset
+        return MotionConfig.anklePlaneY - sqrt(max(0, leg * leg - dx * dx))
     }
 
     // MARK: - Inverse kinematics

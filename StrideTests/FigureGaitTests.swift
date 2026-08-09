@@ -121,18 +121,21 @@ final class FigureGaitTests: XCTestCase {
 
     func test_pelvisIsAlwaysReachableByALoadedLeg() {
         // If this fails, a planted foot is being stretched away from the
-        // floor — the single worst failure mode for this rig.
+        // floor — the single worst failure mode for this rig. Charged
+        // against the worst-case leg, which also carries the inboard
+        // offset between the hip line and the line the feet track along.
         for runBlend in [0.0, 0.35, 0.7, 1.0] {
             let duty = FigureGait.dutyFactor(runBlend: runBlend)
             let stride: CGFloat = 22
+            let height = FigureGait.swingHeight(stride: stride, runBlend: runBlend)
             for phi in phases(120) {
                 let pelvis = FigureGait.pelvisY(phase: phi, duty: duty, stride: stride,
-                                                runBlend: runBlend, energy: 1)
+                                                swingHeight: height, runBlend: runBlend, energy: 1)
                 for footPhase in [phi, phi + 0.5] {
                     let foot = FigureGait.footState(footPhase: footPhase, duty: duty,
-                                                    stride: stride, swingHeight: 4)
+                                                    stride: stride, swingHeight: height)
                     guard foot.planted else { continue }
-                    let dx = foot.offset.x
+                    let dx = abs(foot.offset.x) + FigureGait.lateralInset
                     let dy = MotionConfig.anklePlaneY - pelvis
                     let distance = sqrt(dx * dx + dy * dy)
                     XCTAssertLessThanOrEqual(distance, MotionConfig.legLength + 0.001,
@@ -142,35 +145,50 @@ final class FigureGaitTests: XCTestCase {
         }
     }
 
+    /// The pelvis must not step when a foot touches down or leaves. This is
+    /// the failure that made the knee snap: a constraint appearing all at
+    /// once instead of tightening into place.
+    func test_pelvisIsContinuousThroughTouchdownAndToeOff() {
+        for runBlend in [0.0, 0.5, 1.0] {
+            let duty = FigureGait.dutyFactor(runBlend: runBlend)
+            let stride: CGFloat = 20
+            let height = FigureGait.swingHeight(stride: stride, runBlend: runBlend)
+            func pelvis(_ phi: Double) -> CGFloat {
+                FigureGait.pelvisY(phase: phi, duty: duty, stride: stride,
+                                   swingHeight: height, runBlend: runBlend, energy: 1)
+            }
+            for boundary in [0.0, duty, 0.5, 0.5 + duty] {
+                XCTAssertEqual(pelvis(boundary - 0.0005), pelvis(boundary + 0.0005), accuracy: 0.1,
+                               "pelvis stepped at \(boundary), runBlend \(runBlend)")
+            }
+        }
+    }
+
     func test_walkPelvisPeaksAtMidstance_runPelvisTroughsThere() {
         // The mechanical inversion that makes running running, rather than
         // a faster walk with bigger numbers.
         let walkDuty = FigureGait.dutyFactor(runBlend: 0)
-        let walkMid = FigureGait.pelvisY(phase: walkDuty / 2, duty: walkDuty, stride: 18, runBlend: 0, energy: 1)
-        let walkContact = FigureGait.pelvisY(phase: 0, duty: walkDuty, stride: 18, runBlend: 0, energy: 1)
+        let walkHeight = FigureGait.swingHeight(stride: 18, runBlend: 0)
+        let walkMid = FigureGait.pelvisY(phase: walkDuty / 2, duty: walkDuty, stride: 18,
+                                         swingHeight: walkHeight, runBlend: 0, energy: 1)
+        let walkContact = FigureGait.pelvisY(phase: 0, duty: walkDuty, stride: 18,
+                                             swingHeight: walkHeight, runBlend: 0, energy: 1)
         XCTAssertLessThan(walkMid, walkContact, "walking pelvis should be highest at midstance")
 
         let runDuty = FigureGait.dutyFactor(runBlend: 1)
-        let runMid = FigureGait.pelvisY(phase: runDuty / 2, duty: runDuty, stride: 26, runBlend: 1, energy: 1)
-        let runContact = FigureGait.pelvisY(phase: 0, duty: runDuty, stride: 26, runBlend: 1, energy: 1)
+        let runHeight = FigureGait.swingHeight(stride: 26, runBlend: 1)
+        let runMid = FigureGait.pelvisY(phase: runDuty / 2, duty: runDuty, stride: 26,
+                                        swingHeight: runHeight, runBlend: 1, energy: 1)
+        let runContact = FigureGait.pelvisY(phase: 0, duty: runDuty, stride: 26,
+                                            swingHeight: runHeight, runBlend: 1, energy: 1)
         XCTAssertGreaterThan(runMid, runContact, "running pelvis should be lowest at midstance (absorption)")
-    }
-
-    func test_pelvisIsContinuousAcrossFlightBoundaries() {
-        let runBlend = 1.0
-        let duty = FigureGait.dutyFactor(runBlend: runBlend)
-        for boundary in [duty, 0.5, 0.5 + duty] {
-            let before = FigureGait.pelvisY(phase: boundary - 0.0005, duty: duty, stride: 26, runBlend: runBlend, energy: 1)
-            let after = FigureGait.pelvisY(phase: boundary + 0.0005, duty: duty, stride: 26, runBlend: runBlend, energy: 1)
-            XCTAssertEqual(before, after, accuracy: 0.2, "pelvis jumped at flight boundary \(boundary)")
-        }
     }
 
     func test_zeroEnergy_producesAFlatPelvis() {
         let duty = FigureGait.dutyFactor(runBlend: 0)
-        let baseline = FigureGait.pelvisY(phase: 0, duty: duty, stride: 0, runBlend: 0, energy: 0)
+        let baseline = FigureGait.pelvisY(phase: 0, duty: duty, stride: 0, swingHeight: 0, runBlend: 0, energy: 0)
         for phi in phases(60) {
-            let y = FigureGait.pelvisY(phase: phi, duty: duty, stride: 0, runBlend: 0, energy: 0)
+            let y = FigureGait.pelvisY(phase: phi, duty: duty, stride: 0, swingHeight: 0, runBlend: 0, energy: 0)
             XCTAssertEqual(y, baseline, accuracy: 0.0001)
         }
     }
@@ -179,8 +197,10 @@ final class FigureGaitTests: XCTestCase {
         // Constraint: mechanically-derived motion must not read as bouncing.
         for (runBlend, stride, limit) in [(0.0, CGFloat(20), CGFloat(3)), (1.0, CGFloat(26), CGFloat(9))] {
             let duty = FigureGait.dutyFactor(runBlend: runBlend)
+            let height = FigureGait.swingHeight(stride: stride, runBlend: runBlend)
             let values = phases(120).map {
-                FigureGait.pelvisY(phase: $0, duty: duty, stride: stride, runBlend: runBlend, energy: 1)
+                FigureGait.pelvisY(phase: $0, duty: duty, stride: stride,
+                                   swingHeight: height, runBlend: runBlend, energy: 1)
             }
             let travel = values.max()! - values.min()!
             XCTAssertLessThan(travel, limit, "pelvis travel \(travel) too large at runBlend \(runBlend)")

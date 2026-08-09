@@ -198,9 +198,15 @@ enum MotionConfig {
     static let walkDutyFactor: Double = 0.62
     static let runDutyFactor: Double = 0.34
 
-    /// Baseline hip-to-ankle shortening, as a fraction of full leg length —
-    /// keeps the knee from ever locking dead straight.
-    static let baseStanceFlexion: Double = 0.02
+    /// Baseline hip-to-ankle shortening, as a fraction of full leg length.
+    /// Keeps a visible bend in the knee at all times and, just as
+    /// importantly, keeps the leg away from full extension where two-bone
+    /// IK turns near-singular — there a hair of pelvis movement throws the
+    /// knee sideways, which reads as a snap.
+    static let baseStanceFlexion: Double = 0.05
+    /// Slack held back from the reach budget so rounding and pelvis
+    /// obliquity can never push a planted foot off the floor.
+    static let pelvisReachMargin: CGFloat = 0.6
     /// Extra midstance knee flexion. Small for walking so the compass
     /// effect dominates and the pelvis peaks at midstance; large for
     /// running so absorption wins and it troughs there instead.

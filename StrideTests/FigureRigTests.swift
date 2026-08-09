@@ -34,6 +34,14 @@ final class FigureRigTests: XCTestCase {
         sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y))
     }
 
+    /// How far a foot is ahead of its own neutral position. Measuring
+    /// against the hip centre instead would fold in the stance half-width,
+    /// which reads as a permanent forward bias on one side.
+    private func lead(_ ankle: CGPoint, _ j: FigureJoints, rightSide: Bool) -> CGFloat {
+        let base = j.hipCenter.x + (rightSide ? MotionConfig.stanceWidth / 2 : -MotionConfig.stanceWidth / 2)
+        return ankle.x - base
+    }
+
     // MARK: - Validity
 
     func test_allJointsFiniteAndInsideReferenceBox() {
@@ -98,8 +106,8 @@ final class FigureRigTests: XCTestCase {
             var q = p
             q.phase = Double(step) / 120
             let j = FigureRig.joints(for: q)
-            let rightLead = j.rightAnkle.x - j.hipCenter.x
-            let leftLead = j.leftAnkle.x - j.hipCenter.x
+            let rightLead = lead(j.rightAnkle, j, rightSide: true)
+            let leftLead = lead(j.leftAnkle, j, rightSide: false)
             if rightLead > 2 { sawRightLeading = true }
             if leftLead > 2 { sawLeftLeading = true }
             XCTAssertFalse(rightLead > 3 && leftLead > 3, "both feet forward at once")
@@ -117,8 +125,8 @@ final class FigureRigTests: XCTestCase {
             b.phase = a.phase + 0.5
             let ja = FigureRig.joints(for: a)
             let jb = FigureRig.joints(for: b)
-            XCTAssertEqual(ja.rightAnkle.x - ja.hipCenter.x,
-                           jb.leftAnkle.x - jb.hipCenter.x, accuracy: 0.05)
+            XCTAssertEqual(lead(ja.rightAnkle, ja, rightSide: true),
+                           lead(jb.leftAnkle, jb, rightSide: false), accuracy: 0.05)
             XCTAssertEqual(ja.rightAnkle.y, jb.leftAnkle.y, accuracy: 0.05)
             XCTAssertEqual(ja.rightPlanted, jb.leftPlanted)
         }
@@ -148,13 +156,13 @@ final class FigureRigTests: XCTestCase {
             var q = p
             q.phase = Double(step) / 120
             let j = FigureRig.joints(for: q)
-            let rightLeg = j.rightAnkle.x - j.hipCenter.x
+            let rightLeg = lead(j.rightAnkle, j, rightSide: true)
             let rightArm = j.rightElbow.x - j.rightShoulder.x
             if abs(rightLeg) > 4, abs(rightArm) > 1 {
                 XCTAssertTrue(rightLeg * rightArm < 0,
                               "right arm and right leg moved together at phase \(q.phase)")
             }
-            let leftLeg = j.leftAnkle.x - j.hipCenter.x
+            let leftLeg = lead(j.leftAnkle, j, rightSide: false)
             let leftArm = j.leftElbow.x - j.leftShoulder.x
             if abs(leftLeg) > 4, abs(leftArm) > 1 {
                 XCTAssertTrue(leftLeg * leftArm < 0,
