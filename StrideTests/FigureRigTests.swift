@@ -190,17 +190,20 @@ final class FigureRigTests: XCTestCase {
     // MARK: - Walk vs run
 
     func test_runningDrivesTheKneeHigherThanWalking() {
-        func peakKneeLift(_ params: FigureGaitParameters) -> CGFloat {
-            var highest: CGFloat = 0
+        // How close the knee gets to the hip at its highest point in the
+        // swing. The knee always hangs below the hip, so a *smaller* gap
+        // is a higher knee drive.
+        func closestKneeToHip(_ params: FigureGaitParameters) -> CGFloat {
+            var closest = CGFloat.greatestFiniteMagnitude
             for step in 0..<120 {
                 var p = params
                 p.phase = Double(step) / 120
                 let j = FigureRig.joints(for: p)
-                highest = max(highest, j.hipCenter.y - j.rightKnee.y)
+                closest = min(closest, j.rightKnee.y - j.hipCenter.y)
             }
-            return highest
+            return closest
         }
-        XCTAssertGreaterThan(peakKneeLift(running()), peakKneeLift(walking()))
+        XCTAssertLessThan(closestKneeToHip(running()), closestKneeToHip(walking()))
     }
 
     func test_runningHoldsTheElbowMoreFlexedThanWalking() {

@@ -180,9 +180,13 @@ enum FigureRig {
                           flexBase: elbowFlexBase, energy: energy, sign: -1)
 
         // 7. Feet. A short segment forward of each ankle — the smallest
-        //    mark that reads as contact with a floor.
-        let rightToe = toe(from: rightAnkle, pitchDegrees: rightFoot.pitch)
-        let leftToe = toe(from: leftAnkle, pitchDegrees: leftFoot.pitch)
+        //    mark that reads as contact with a floor. Pitch fades out with
+        //    stride so a standing Figure's feet sit flat rather than
+        //    rocking through a cycle that isn't going anywhere.
+        let pitchScale = MotionConfig.strideLengthMin > 0
+            ? min(1, Double(stride / MotionConfig.strideLengthMin)) : 0
+        let rightToe = toe(from: rightAnkle, pitchDegrees: rightFoot.pitch * pitchScale)
+        let leftToe = toe(from: leftAnkle, pitchDegrees: leftFoot.pitch * pitchScale)
 
         // 8. Lean, as a true rotation of everything above the pelvis. V1
         //    sheared instead, which skewed the torso and left the hands
