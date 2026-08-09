@@ -66,7 +66,7 @@ struct ProfileScreen: View {
             .buttonStyle(.plain)
             Hairline()
 
-            #if DEBUG
+            #if DEBUG || STRIDE_INTERNAL_TESTING
             Button { router.push(.figureLab) } label: {
                 HStack {
                     Text("Figure Lab (debug)")

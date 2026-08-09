@@ -33,8 +33,8 @@ enum Route: Hashable {
     // 26–28
     case profile, settings, deleteConfirm
     // Development-only — Phase 1.1A Figure Motion Engine visual tuning.
-    // Never reachable in a release build; see FigureLabScreen.swift.
-    #if DEBUG
+    // Never reachable in a normal release build; see FigureLabScreen.swift.
+    #if DEBUG || STRIDE_INTERNAL_TESTING
     case figureLab
     #endif
 }

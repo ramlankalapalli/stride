@@ -7,6 +7,16 @@ name: Build and publish to TestFlight
 # AltServer.
 on:
   workflow_dispatch:
+    inputs:
+      internal_testing:
+        description: >-
+          Include the DEBUG-only Figure Lab in this build via
+          STRIDE_INTERNAL_TESTING (see FigureLabScreen.swift). Leave off for
+          a normal build — only intended for a one-off internal TestFlight
+          build used to tune the Figure on-device. Temporary; remove once
+          that tuning pass is done.
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -32,6 +42,10 @@ jobs:
       # using it directly means every push gets a fresh, valid build number
       # with no state to track in the repo.
       BUILD_NUMBER: ${{ github.run_number }}
+      # Only ever "true" for a manually-dispatched run with the checkbox
+      # set — a push-triggered build (github.event.inputs is unset) always
+      # falls through to "false" here.
+      INTERNAL_TESTING: ${{ github.event.inputs.internal_testing == 'true' }}
     steps:
       - uses: actions/checkout@v4
 

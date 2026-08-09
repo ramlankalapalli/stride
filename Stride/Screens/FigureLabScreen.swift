@@ -1,4 +1,8 @@
-#if DEBUG
+// Gate note: DEBUG covers local Xcode debug builds; STRIDE_INTERNAL_TESTING
+// is a temporary, manually-opted-in flag for a specific internal TestFlight
+// build used to visually tune the Figure on-device (see Fastfile/build.yml).
+// It is never set for a normal Release/App Store build.
+#if DEBUG || STRIDE_INTERNAL_TESTING
 import SwiftUI
 
 // Development-only tool for visually tuning Phase 1.1A's Figure Motion
