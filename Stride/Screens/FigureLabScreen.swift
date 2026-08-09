@@ -122,35 +122,40 @@ private struct LabGroundOverlay: View {
 
     var body: some View {
         GeometryReader { geo in
-            let scale = min(geo.size.width, geo.size.height) / FigureRig.referenceSize
-            let dx = (geo.size.width - FigureRig.referenceSize * scale) / 2
-            let dy = (geo.size.height - FigureRig.referenceSize * scale) / 2
-            func place(_ p: CGPoint) -> CGPoint {
-                CGPoint(x: dx + p.x * scale, y: dy + p.y * scale)
-            }
-            let groundY = dy + MotionConfig.groundY * scale
-
             ZStack(alignment: .topLeading) {
                 Path { p in
-                    p.move(to: CGPoint(x: 0, y: groundY))
-                    p.addLine(to: CGPoint(x: geo.size.width, y: groundY))
+                    let y = groundLineY(in: geo.size)
+                    p.move(to: CGPoint(x: 0, y: y))
+                    p.addLine(to: CGPoint(x: geo.size.width, y: y))
                 }
                 .stroke(Color.steel.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
                 // Filled = planted, hollow = swinging.
-                contactMark(at: place(joints.leftAnkle), planted: joints.leftPlanted)
-                contactMark(at: place(joints.rightAnkle), planted: joints.rightPlanted)
+                contactMark(at: place(joints.leftAnkle, in: geo.size), planted: joints.leftPlanted)
+                contactMark(at: place(joints.rightAnkle, in: geo.size), planted: joints.rightPlanted)
 
                 if showJoints {
                     ForEach(Array(jointPoints.enumerated()), id: \.offset) { _, point in
                         Circle()
                             .fill(Color.steel.opacity(0.7))
                             .frame(width: 3, height: 3)
-                            .position(place(point))
+                            .position(place(point, in: geo.size))
                     }
                 }
             }
         }
+    }
+
+    /// Same scale-and-centre transform RigFigureShape applies, so the
+    /// overlay lines up with the drawn Figure exactly.
+    private func place(_ p: CGPoint, in size: CGSize) -> CGPoint {
+        let scale = min(size.width, size.height) / FigureRig.referenceSize
+        return CGPoint(x: (size.width - FigureRig.referenceSize * scale) / 2 + p.x * scale,
+                       y: (size.height - FigureRig.referenceSize * scale) / 2 + p.y * scale)
+    }
+
+    private func groundLineY(in size: CGSize) -> CGFloat {
+        place(CGPoint(x: 0, y: MotionConfig.groundY), in: size).y
     }
 
     private var jointPoints: [CGPoint] {
