@@ -53,9 +53,13 @@ final class FigureRigTests: XCTestCase {
         params.strideLength = 10
         params.energy = 0.8
 
-        params.phase = 0.0
+        // Quarter and three-quarter cycle — the two points of maximum
+        // (opposite-sign) swing excursion. 0.0/0.5 are both zero-crossings
+        // of sin() and would coincide, which isn't what this test means to
+        // check.
+        params.phase = 0.25
         let a = FigureRig.joints(for: params)
-        params.phase = 0.5
+        params.phase = 0.75
         let b = FigureRig.joints(for: params)
 
         // Half a cycle later, the leg that was forward is now back — the
