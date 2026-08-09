@@ -33,18 +33,23 @@ jobs:
         run: sudo xcode-select -s $(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
 
       # No -destination device is hardcoded to a specific simulator name —
-      # names/availability drift across Xcode versions. This picks whatever
-      # iPhone simulator the runner's currently-selected Xcode actually has.
+      # names/availability drift across Xcode versions, and a bare
+      # "name=X" destination implies OS:latest, which xcodebuild can fail
+      # to resolve when a device name maps to several installed runtimes
+      # (confirmed on this runner: "iPhone 16e" exists at OS 26.2/26.4.1/26.5,
+      # and "OS:latest" matched none of them). Pinning an exact UDID from
+      # `simctl` sidesteps that ambiguity entirely.
       - name: Pick an available iPhone simulator
         id: sim
         run: |
-          NAME=$(xcrun simctl list devices available iPhone -j \
+          UDID=$(xcrun simctl list devices available iPhone -j \
             | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
-              names=[dev['name'] for runtime in d.values() for dev in runtime if dev.get('isAvailable', True)]; \
-              print(names[-1] if names else '')")
-          if [ -z "$NAME" ]; then echo "No available iPhone simulator found"; exit 1; fi
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "Using simulator: $NAME"
+              devs=[dev for runtime in d.values() for dev in runtime if dev.get('isAvailable', True)]; \
+              print(devs[-1]['udid'] if devs else '')")
+          if [ -z "$UDID" ]; then echo "No available iPhone simulator found"; exit 1; fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator UDID: $UDID"
+          xcrun simctl list devices | grep "$UDID" || true
 
       - name: Build for iOS Simulator
         run: |
@@ -52,7 +57,7 @@ jobs:
           xcodebuild build \
             -project Stride.xcodeproj \
             -scheme Stride \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee build.log
 
@@ -62,7 +67,7 @@ jobs:
           xcodebuild test \
             -project Stride.xcodeproj \
             -scheme Stride \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee test.log
 
