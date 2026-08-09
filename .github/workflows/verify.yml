@@ -1,0 +1,87 @@
+name: Verify (build + test, no TestFlight)
+
+# Verification-only path: generates the Xcode project, builds Stride for an
+# iOS Simulator, and runs the StrideTests unit test target. Never archives,
+# never signs for distribution, never touches fastlane/match/App Store
+# Connect, and never uploads to TestFlight — deliberately a separate
+# workflow from build.yml (which uploads to TestFlight on every push to
+# main) so a verification run can never trigger a release as a side effect.
+#
+# Not wired to `push: branches: [main]` on purpose, for the same reason —
+# trigger it by hand (workflow_dispatch) or on a pull request.
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+          brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          set -o pipefail
+          xcodegen generate 2>&1 | tee xcodegen.log
+
+      - name: Select Xcode
+        run: sudo xcode-select -s $(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+
+      # No -destination device is hardcoded to a specific simulator name —
+      # names/availability drift across Xcode versions, and a bare
+      # "name=X" destination implies OS:latest, which xcodebuild can fail
+      # to resolve when a device name maps to several installed runtimes
+      # (confirmed on this runner: "iPhone 16e" exists at OS 26.2/26.4.1/26.5,
+      # and "OS:latest" matched none of them). Pinning an exact UDID from
+      # `simctl` sidesteps that ambiguity entirely.
+      - name: Pick an available iPhone simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available iPhone -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+              devs=[dev for runtime in d.values() for dev in runtime if dev.get('isAvailable', True)]; \
+              print(devs[-1]['udid'] if devs else '')")
+          if [ -z "$UDID" ]; then echo "No available iPhone simulator found"; exit 1; fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator UDID: $UDID"
+          xcrun simctl list devices | grep "$UDID" || true
+
+      - name: Build for iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Stride.xcodeproj \
+            -scheme Stride \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log
+
+      - name: Run StrideTests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Stride.xcodeproj \
+            -scheme Stride \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee test.log
+
+      - name: Report failure details
+        if: failure()
+        run: |
+          {
+            echo '### Verify failure — last errors found'
+            echo '```'
+            for f in test.log build.log xcodegen.log; do
+              if [ -f "$f" ]; then
+                echo "--- $f errors ---"
+                grep -iE "error:|failed|FAIL" "$f" -A 3 | tail -c 4000
+              fi
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

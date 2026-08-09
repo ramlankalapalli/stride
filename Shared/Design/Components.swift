@@ -217,6 +217,11 @@ struct ProgressTrack: View {
             pulseOpacity = 0.85
             withAnimation(.easeOut(duration: 0.45)) { pulseOpacity = 0 }
         }
+        // Centralized here rather than at each call site — every screen
+        // that uses ProgressTrack (Home, widget) gets a label for free.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Daily goal progress")
+        .accessibilityValue("\(Int(min(max(fraction, 0), 1) * 100)) percent")
     }
 }
 

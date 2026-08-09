@@ -43,10 +43,53 @@ struct User: Codable, Identifiable {
     var avatarUnlocks: [UnlockID] = []
     var points: Int = 0
     var inviteCode: String = ""
+    /// General notification permission/master switch.
     var notificationsEnabled: Bool = false
+    /// Phase 1.0.5: split out from notificationsEnabled — Settings
+    /// previously bound both "Nag me" and "Streak warnings" to this single
+    /// property, so toggling one silently toggled the other. Streak-risk
+    /// reminders specifically (NudgeEngine's .streakAtRiskAM/.streakAtRiskPM
+    /// triggers).
+    var streakRiskNudgesEnabled: Bool = false
+    /// Phase 1.0.5: inactivity/long-silence reminders specifically
+    /// (NudgeEngine's .longSilence/.missedYesterday triggers) — distinct
+    /// from both the general switch and streak-risk reminders.
+    var inactivityNudgesEnabled: Bool = false
     /// Opt-in. Off by default — handoff §4.
     var spokenNudgesEnabled: Bool = false
     var watchConnected: Bool = false
+
+    init() {}
+
+    /// Phase 1.0.5: Swift's synthesized Decodable does NOT fall back to a
+    /// property's declared default when a key is missing — it throws. Real
+    /// devices already have a persisted snapshot from before
+    /// streakRiskNudgesEnabled/inactivityNudgesEnabled existed; without this
+    /// custom decoder, AppState.load() would fail on that old JSON (the
+    /// `try?` swallows the error) and silently reset the whole profile —
+    /// name, points, streak, every record — back to defaults on next
+    /// launch. decodeIfPresent + a fallback keeps old snapshots loading
+    /// exactly as before, with the two new fields simply defaulting to off.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        age = try c.decodeIfPresent(Int.self, forKey: .age)
+        heightCm = try c.decodeIfPresent(Double.self, forKey: .heightCm)
+        weightKg = try c.decodeIfPresent(Double.self, forKey: .weightKg)
+        activityLevel = try c.decodeIfPresent(ActivityLevel.self, forKey: .activityLevel) ?? .someDays
+        unitPreference = try c.decodeIfPresent(UnitPreference.self, forKey: .unitPreference) ?? .imperial
+        avatarUnlocks = try c.decodeIfPresent([UnlockID].self, forKey: .avatarUnlocks) ?? []
+        points = try c.decodeIfPresent(Int.self, forKey: .points) ?? 0
+        inviteCode = try c.decodeIfPresent(String.self, forKey: .inviteCode) ?? ""
+        notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? false
+        streakRiskNudgesEnabled = try c.decodeIfPresent(Bool.self, forKey: .streakRiskNudgesEnabled) ?? false
+        inactivityNudgesEnabled = try c.decodeIfPresent(Bool.self, forKey: .inactivityNudgesEnabled) ?? false
+        spokenNudgesEnabled = try c.decodeIfPresent(Bool.self, forKey: .spokenNudgesEnabled) ?? false
+        watchConnected = try c.decodeIfPresent(Bool.self, forKey: .watchConnected) ?? false
+    }
 
     var daysSinceDayZero: Int {
         max(0, Calendar.current.dateComponents([.day], from: createdAt, to: Date()).day ?? 0)
@@ -59,6 +102,12 @@ struct DailyRecord: Codable, Identifiable {
     var stepsFromPhone: Int = 0
     /// 0 when no Watch is connected.
     var stepsFromWatch: Int = 0
+    /// Legacy field. Manual step entry was removed from the product —
+    /// nothing writes to this anymore (AppState no longer has
+    /// addManualSteps). Kept only so already-persisted historical records
+    /// keep decoding and displaying their true recorded total; never used
+    /// to decide goal completion, streaks, milestones, or ranking — see
+    /// CreditedSteps, which is automatic-only for every record, old or new.
     var stepsManualAdd: Int = 0
     var goalMet: Bool = false
     /// 24 values, one per hour. Drives the waveform chart.

@@ -36,7 +36,7 @@ struct ProfileScreen: View {
 
             HStack(spacing: 0) {
                 stat("\(app.user.points)", "Points")
-                stat("\(app.streak.best)", "Best streak")
+                stat("\(app.displayedStreak.best)", "Best streak")
                 stat(app.user.inviteCode, "Invite")
             }
             .padding(.bottom, Space.section)
@@ -106,8 +106,12 @@ struct SettingsScreen: View {
                 }
 
                 group(Copy.Settings.notificationsGroup) {
+                    // Phase 1.0.5: these three used to share notificationsEnabled
+                    // for two of them — toggling "Nag me" silently toggled
+                    // "Streak warnings" too. Now distinct, separately persisted.
                     toggle(Copy.Settings.nagMe, $app.user.notificationsEnabled)
-                    toggle(Copy.Settings.streakWarnings, $app.user.notificationsEnabled)
+                    toggle(Copy.Settings.streakWarnings, $app.user.streakRiskNudgesEnabled)
+                    toggle(Copy.Settings.inactivityNudges, $app.user.inactivityNudgesEnabled)
                     toggle(Copy.Settings.spokenNudges, $app.user.spokenNudgesEnabled)
                 }
 

@@ -11,11 +11,13 @@ struct RecordScreen: View {
             MonoLabel(Copy.Record.status, size: 10, color: .steel)
                 .padding(.bottom, 14)
 
-            Text("\(app.streak.current)")
+            // displayedStreak — same-day goal hit shows immediately here
+            // too, not just on Home.
+            Text("\(app.displayedStreak.current)")
                 .font(Type.figure(72))
                 .foregroundStyle(Color.ink)
 
-            Text(Copy.Record.subtitle(streak: app.streak))
+            Text(Copy.Record.subtitle(streak: app.displayedStreak))
                 .font(Type.archivo(17, .medium))
                 .foregroundStyle(Color.dim)
                 .padding(.top, 6)

@@ -214,14 +214,32 @@ struct LiveAvatar: View {
     /// goalBreakthroughTick) and never need to reset it.
     var breakthroughTick: Int = 0
 
+    /// Phase 1.0.5: Reduce Motion support. When on, the repeatForever bob,
+    /// spring overshoot, and breakthrough translation/scale are all
+    /// disabled — state still changes (pose, a restrained opacity dip for
+    /// breakthrough), just without the motion.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @State private var bob = false
     @State private var breakthroughPulse = false
 
     private var clamped: Double { min(1, max(0, intensity)) }
-    private var bobAmplitude: CGFloat { 2.5 + CGFloat(clamped) * 5.5 }   // 2.5...8
-    private var bobDuration: Double { 0.62 - clamped * 0.28 }            // 0.62...0.34, faster with effort
-    private var lean: Double { clamped * 5 }                             // degrees, forward at pace
-    private var runningScale: CGFloat { 1 + clamped * 0.05 }
+    private var bobAmplitude: CGFloat {
+        MotionConfig.bobAmplitudeMin + CGFloat(clamped) * (MotionConfig.bobAmplitudeMax - MotionConfig.bobAmplitudeMin)
+    }
+    private var bobDuration: Double {
+        MotionConfig.bobDurationMax - clamped * (MotionConfig.bobDurationMax - MotionConfig.bobDurationMin)
+    }
+    private var lean: Double { clamped * MotionConfig.leanMaxDegrees }
+    private var runningScale: CGFloat { 1 + CGFloat(clamped) * (MotionConfig.runningScaleMax - 1) }
+
+    private var stateDescription: String {
+        switch activityState {
+        case .idle:    return "standing still"
+        case .walking: return "walking"
+        case .active:  return "moving briskly"
+        }
+    }
 
     var body: some View {
         Group {
@@ -230,25 +248,50 @@ struct LiveAvatar: View {
                 AvatarView(pose: .standing, size: size, transforms: transforms,
                           strokeColorOverride: .dimmer)
             case .walking:
-                AvatarView(pose: .standing, size: size, transforms: transforms)
-                    .rotationEffect(.degrees(bob ? lean : -lean * 0.4), anchor: .bottom)
-                    .offset(y: bob ? -bobAmplitude : bobAmplitude * 0.6)
-                    .animation(.easeInOut(duration: bobDuration).repeatForever(autoreverses: true), value: bob)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: clamped)
+                if reduceMotion {
+                    // No repeatForever bob — idle/walking/active are already
+                    // told apart by pose and color; that's preserved.
+                    AvatarView(pose: .standing, size: size, transforms: transforms)
+                } else {
+                    AvatarView(pose: .standing, size: size, transforms: transforms)
+                        .rotationEffect(.degrees(bob ? lean : -lean * 0.4), anchor: .bottom)
+                        .offset(y: bob ? -bobAmplitude : bobAmplitude * 0.6)
+                        .animation(.easeInOut(duration: bobDuration).repeatForever(autoreverses: true), value: bob)
+                        .animation(.spring(response: MotionConfig.walkingSpringResponse,
+                                          dampingFraction: MotionConfig.walkingSpringDamping), value: clamped)
+                }
             case .active:
                 AvatarView(pose: .running, size: size, transforms: transforms, speedLines: true)
-                    .scaleEffect(runningScale)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.75), value: clamped)
+                    .scaleEffect(reduceMotion ? 1 : runningScale)
+                    .animation(reduceMotion
+                              ? .easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
+                              : .spring(response: MotionConfig.runningSpringResponse,
+                                       dampingFraction: MotionConfig.runningSpringDamping),
+                              value: clamped)
             }
         }
-        .offset(x: breakthroughPulse ? 5 : 0)
-        .scaleEffect(breakthroughPulse ? 1.1 : 1)
-        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: activityState)
+        .offset(x: (!reduceMotion && breakthroughPulse) ? MotionConfig.breakthroughOffsetX : 0)
+        .scaleEffect((!reduceMotion && breakthroughPulse) ? MotionConfig.breakthroughScale : 1)
+        .opacity(reduceMotion && breakthroughPulse ? 0.6 : 1)
+        .animation(reduceMotion
+                  ? .easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
+                  : .spring(response: MotionConfig.poseTransitionSpringResponse,
+                           dampingFraction: MotionConfig.poseTransitionSpringDamping),
+                  value: activityState)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Figure")
+        .accessibilityValue(stateDescription)
         .onAppear { bob = true }
         .onChange(of: breakthroughTick) { _, _ in
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.45)) { breakthroughPulse = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { breakthroughPulse = false }
+            let inAnim = reduceMotion
+                ? Animation.easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
+                : .spring(response: MotionConfig.breakthroughInResponse, dampingFraction: MotionConfig.breakthroughInDamping)
+            let outAnim = reduceMotion
+                ? Animation.easeInOut(duration: MotionConfig.reducedMotionCrossfadeDuration)
+                : .spring(response: MotionConfig.breakthroughOutResponse, dampingFraction: MotionConfig.breakthroughOutDamping)
+            withAnimation(inAnim) { breakthroughPulse = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + MotionConfig.breakthroughHoldDuration) {
+                withAnimation(outAnim) { breakthroughPulse = false }
             }
         }
     }

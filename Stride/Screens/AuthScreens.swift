@@ -163,6 +163,12 @@ struct ForgotPasswordSentScreen: View {
             Spacer().frame(height: Space.section)
             MonoLabel(Copy.Forgot.spam, size: 10, color: .dimmer)
             Spacer(minLength: 0)
+            // Phase 1.0.5: SetNewPasswordScreen was built and routed but had
+            // no reachable path anywhere in the app (LocalAuthService has no
+            // real email/token delivery to deep-link from). This is the
+            // in-app continuation of the same flow rather than a deep link.
+            FooterLink(text: Copy.Forgot.continueWithKey) { router.push(.setNewPassword) }
+                .padding(.bottom, 6)
             FooterLink(text: Copy.Forgot.resend) { router.pop() }
                 .padding(.bottom, Space.block)
         }

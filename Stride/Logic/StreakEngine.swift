@@ -2,15 +2,22 @@ import Foundation
 
 // Streak rules. Handoff §5.
 //
-// A day is "hit" if phone + watch + manual >= dailyGoal by local midnight.
-// `current` increments at midnight rollover when the completed day was a hit,
-// and resets to 0 on a miss. `best` is kept permanently, even after a reset —
-// it is what the copy uses to say what was thrown away.
+// A day is "hit" if automatic steps (phone + watch) >= dailyGoal by local
+// midnight — automatic-only, the same rule goal completion, milestones, and
+// the leaderboard all share. `current` increments at midnight rollover when
+// the completed day was a hit, and resets to 0 on a miss. `best` is kept
+// permanently, even after a reset — it is what the copy uses to say what
+// was thrown away.
 
 enum StreakEngine {
 
+    /// Delegates to CreditedSteps rather than comparing the raw total
+    /// directly — a day only "hits" on its automatic total. This matters
+    /// for old records that may still carry a legacy manual value; new
+    /// records never have one, so this is equivalent to a plain total
+    /// comparison for anything created after manual entry was removed.
     static func isHit(_ record: DailyRecord, goal: Int) -> Bool {
-        record.total >= goal
+        CreditedSteps.qualifies(record, goal: goal)
     }
 
     /// Fold a completed day into the streak. Call once at midnight rollover,
@@ -38,6 +45,28 @@ enum StreakEngine {
         s.totalDaysMissed += 1
         s.current = 0
         return s
+    }
+
+    /// Phase 1.0.5 — fixes the same-day display lag: previously
+    /// AppState.creditGoalDay computed a provisional streak for the
+    /// milestone check but never wrote it back, so the persisted
+    /// `streak.current` only ever updated the *next* time `reconcile` ran —
+    /// meaning Home/Record/Profile kept showing yesterday's count even after
+    /// today's goal was legitimately hit.
+    ///
+    /// This is a pure, read-only projection: it never mutates the persisted
+    /// streak, so `reconcile`'s day-by-day walk (which only ever processes
+    /// days strictly before "today" at the time it runs) is completely
+    /// unaffected and cannot double-count. The day that was "today" when
+    /// this projected a +1 gets folded into the real, persisted streak
+    /// exactly once, on the first `reconcile` call where it has become a
+    /// genuinely completed past day — same as before this existed.
+    static func displayedStreak(base: Streak, todayQualifies: Bool) -> Streak {
+        guard todayQualifies else { return base }
+        var projected = base
+        projected.current += 1
+        projected.best = max(projected.best, projected.current)
+        return projected
     }
 
     /// Catch up the streak from the last processed day to yesterday.
@@ -71,8 +100,10 @@ enum StreakEngine {
 // personal best, and on the first goal-day ever.
 
 enum Milestones {
-    /// Hashable (not just Equatable) — Route embeds this in an enum case and
-    /// Route itself needs to stay Hashable for NavigationStack's path.
+    /// Identifiable conformance (RootView.swift) drives the fullScreenCover
+    /// that presents MilestoneScreen. Hashable is kept for value-semantics
+    /// equality checks generally, though it's no longer required by Route
+    /// specifically — see the note on Route.swift's removed .milestone case.
     struct Event: Hashable {
         var streak: Int
         var isPersonalBest: Bool
