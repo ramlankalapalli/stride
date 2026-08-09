@@ -253,13 +253,13 @@ struct FigureMotionEngine {
     }
 }
 
-#if DEBUG
+#if DEBUG || STRIDE_INTERNAL_TESTING
 extension FigureMotionEngine {
     /// Figure Lab only: jump straight to a postural state for preview,
-    /// bypassing the normal transition rules. Never compiled into a
-    /// release build. Whatever inputs the caller keeps feeding `update`
-    /// afterward still govern where the engine goes next — this only sets
-    /// the starting point.
+    /// bypassing the normal transition rules. Never compiled into a normal
+    /// release build — see FigureLabScreen.swift. Whatever inputs the
+    /// caller keeps feeding `update` afterward still govern where the
+    /// engine goes next — this only sets the starting point.
     mutating func debugForceState(_ state: FigureMotionState, now: Date = Date()) {
         self.state = state
         self.stateEnteredAt = now
