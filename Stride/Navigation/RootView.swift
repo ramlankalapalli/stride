@@ -85,6 +85,9 @@ struct RouteDestination: View {
         case .profile:               ProfileScreen()
         case .settings:              SettingsScreen()
         case .deleteConfirm:         DeleteConfirmScreen()
+        #if DEBUG
+        case .figureLab:             FigureLabScreen()
+        #endif
         }
     }
 }

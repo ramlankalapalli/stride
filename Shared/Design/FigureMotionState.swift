@@ -253,6 +253,20 @@ struct FigureMotionEngine {
     }
 }
 
+#if DEBUG
+extension FigureMotionEngine {
+    /// Figure Lab only: jump straight to a postural state for preview,
+    /// bypassing the normal transition rules. Never compiled into a
+    /// release build. Whatever inputs the caller keeps feeding `update`
+    /// afterward still govern where the engine goes next — this only sets
+    /// the starting point.
+    mutating func debugForceState(_ state: FigureMotionState, now: Date = Date()) {
+        self.state = state
+        self.stateEnteredAt = now
+    }
+}
+#endif
+
 private func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
 private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: Double) -> CGFloat { a + (b - a) * CGFloat(t) }
 private func mix(_ lo: CGFloat, _ hi: CGFloat, _ t: Double) -> CGFloat { lo + CGFloat(t) * (hi - lo) }

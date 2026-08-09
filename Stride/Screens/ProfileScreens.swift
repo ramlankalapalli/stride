@@ -66,6 +66,20 @@ struct ProfileScreen: View {
             .buttonStyle(.plain)
             Hairline()
 
+            #if DEBUG
+            Button { router.push(.figureLab) } label: {
+                HStack {
+                    Text("Figure Lab (debug)")
+                        .font(Type.archivo(15, .medium))
+                        .foregroundStyle(Color.dim)
+                    Spacer()
+                }
+                .padding(.vertical, 16)
+            }
+            .buttonStyle(.plain)
+            Hairline()
+            #endif
+
             Spacer(minLength: 0)
         }
     }

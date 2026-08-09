@@ -32,6 +32,11 @@ enum Route: Hashable {
     case leaderboard, addFriends, unlocks, progression
     // 26–28
     case profile, settings, deleteConfirm
+    // Development-only — Phase 1.1A Figure Motion Engine visual tuning.
+    // Never reachable in a release build; see FigureLabScreen.swift.
+    #if DEBUG
+    case figureLab
+    #endif
 }
 
 enum Flow {

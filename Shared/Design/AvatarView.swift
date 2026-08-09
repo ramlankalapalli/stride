@@ -190,7 +190,7 @@ struct AvatarView: View {
 /// switching between fixed `FigureShape` poses. Same stroke conventions
 /// (round caps/joins) and the same 120×120 reference box, so it sits
 /// visually consistent with the legacy static poses used elsewhere.
-private struct RigFigureShape: Shape {
+struct RigFigureShape: Shape {
     let joints: FigureJoints
 
     func path(in rect: CGRect) -> Path {
@@ -231,7 +231,7 @@ private struct RigFigureShape: Shape {
 /// during a view update (which SwiftUI disallows) — the box itself is only
 /// ever assigned once, into `@State`; everything that changes over time
 /// lives inside it as plain var mutation on a class.
-private final class FigureMotionBox {
+final class FigureMotionBox {
     var engine = FigureMotionEngine()
 }
 
