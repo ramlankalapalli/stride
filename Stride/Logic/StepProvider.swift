@@ -61,6 +61,9 @@ final class StepProvider: ObservableObject {
     /// Rolling count of seconds spent in walking/active state today — a
     /// coarse "active minutes" proxy, reset on day rollover.
     @Published private(set) var activeSecondsToday: TimeInterval = 0
+    /// Smoothed steps/minute (Phase 1.1A) — feeds the Figure Motion Engine's
+    /// locomotion cycle rate. See MovementClassifier.updateCadence.
+    @Published private(set) var smoothedCadence: Double = 0
 
     /// True once HealthKit is the source of truth. The tracking screen uses this
     /// to choose between "Phone sensor — live" and "Phone + Watch — combined".
@@ -194,6 +197,7 @@ final class StepProvider: ObservableObject {
         lastMeaningfulMovementAt = nil
         inactiveDuration = nil
         activeSecondsToday = 0
+        smoothedCadence = 0
 
         guard !healthConnected else { return }
         stepsFromPhone = 0
@@ -234,6 +238,7 @@ final class StepProvider: ObservableObject {
         movementSessionDuration = snap.movementSessionDuration
         lastMeaningfulMovementAt = snap.lastMeaningfulMovementAt
         inactiveDuration = snap.inactiveDuration
+        smoothedCadence = snap.smoothedCadence
     }
 
     // MARK: - Hourly waveform

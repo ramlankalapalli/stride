@@ -37,6 +37,11 @@ struct HomeScreen: View {
                 // actually happening right now, not a fixed portrait.
                 LiveAvatar(activityState: app.steps.activityState,
                           intensity: app.steps.motionIntensity,
+                          movementTrend: app.steps.movementTrend,
+                          isInMovementSession: app.steps.isInMovementSession,
+                          movementSessionDuration: app.steps.movementSessionDuration,
+                          inactiveDuration: app.steps.inactiveDuration,
+                          smoothedCadence: app.steps.smoothedCadence,
                           size: 76,
                           transforms: app.equipped,
                           breakthroughTick: app.goalBreakthroughTick)

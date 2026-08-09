@@ -84,6 +84,18 @@ platform :ios do
     # code_signing_identity: param silently did not persist — the project
     # still resolved to "Apple Development". Force it directly on the
     # archive command instead, which is guaranteed to apply.
+    # Temporary internal-testing switch (see FigureLabScreen.swift): only
+    # set when the workflow is dispatched with internal_testing=true, so a
+    # normal push-to-main Release build never includes the debug Figure Lab.
+    # Easy to remove later — delete this ENV check, the workflow_dispatch
+    # input in build.yml, and the `|| STRIDE_INTERNAL_TESTING` gates.
+    # Matches the existing CODE_SIGN_IDENTITY=\"Apple Distribution\" style
+    # below — a single backslash-escaped quote in this Ruby source becomes
+    # one literal `"` in the xcargs string handed to xcodebuild, so the
+    # space-containing value stays one token.
+    internal_testing_flags = ENV["INTERNAL_TESTING"] == "true" ? " SWIFT_ACTIVE_COMPILATION_CONDITIONS=\"$(inherited) STRIDE_INTERNAL_TESTING\"" : ""
+    UI.important("MARK: internal testing flag #{ENV['INTERNAL_TESTING'] == 'true' ? 'ON' : 'off'} #{Time.now}")
+
     build_app(
       project: "Stride.xcodeproj",
       scheme: "Stride",
@@ -95,7 +107,7 @@ platform :ios do
           widget_id => ENV["sigh_#{widget_id}_appstore_profile-name"]
         }
       },
-      xcargs: "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
+      xcargs: "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}#{internal_testing_flags}"
     )
     UI.important("MARK: build_app done #{Time.now}")
 

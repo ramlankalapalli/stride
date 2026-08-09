@@ -79,4 +79,78 @@ enum MotionConfig {
     /// above — one restrained crossfade duration used everywhere motion
     /// would otherwise be exaggerated.
     static let reducedMotionCrossfadeDuration: Double = 0.2
+
+    // MARK: - Cadence smoothing (MovementClassifier, Phase 1.1A)
+
+    /// Per-second exponential convergence rate for smoothedCadence easing
+    /// toward the instantaneous reading (or toward 0 when samples go
+    /// stale). Higher = snappier, lower = smoother/noisier-resistant.
+    static let cadenceSmoothingRate: Double = 0.6
+    /// Below this inter-sample gap, an instantaneous rate reading is
+    /// treated as too noisy to trust and the previous smoothed value is
+    /// reused instead.
+    static let cadenceMinSampleGap: TimeInterval = 0.15
+
+    // MARK: - Figure Motion Engine (Phase 1.1A) — postural timing
+
+    /// Brief anticipation before the first real gait cycle.
+    static let risingDuration: TimeInterval = 0.32
+    /// How long a real deceleration takes before settling into recovery.
+    static let slowingReleaseDuration: TimeInterval = 1.1
+    /// How long the restrained post-session settle lasts before STILL.
+    static let recoveryDuration: TimeInterval = 1.6
+    /// Minimum time SLOWING must have been running before a moving signal
+    /// is allowed to snap it back to LOCOMOTION — hysteresis against a
+    /// single noisy idle tick causing visible stutter.
+    static let minSlowingDwellBeforeResume: TimeInterval = 0.4
+    /// Meaningful inactivity before a restrained restless weight shift.
+    static let restlessInactivityThreshold: TimeInterval = 20 * 60
+    /// Deeper inactivity before the calm long-idle posture.
+    static let restingInactivityThreshold: TimeInterval = 90 * 60
+    /// How long one restless weight-shift beat lasts before easing back to STILL.
+    static let restlessCycleDuration: TimeInterval = 2.2
+    /// Minimum gap between restless beats — keeps it from ever reading as
+    /// nagging or fidgety.
+    static let restlessCooldown: TimeInterval = 45
+
+    // MARK: - Figure Motion Engine — gait parameter smoothing + ranges
+
+    /// Per-second exponential convergence rate the engine eases current
+    /// gait parameters toward their state's target at.
+    static let gaitSmoothingRate: Double = 5.0
+
+    static let strideLengthMin: CGFloat = 2
+    static let strideLengthMax: CGFloat = 11
+    static let armSwingMin: CGFloat = 1.5
+    static let armSwingMax: CGFloat = 9
+    static let forwardLeanMin: Double = 1
+    static let forwardLeanMax: Double = 7
+    static let locomotionBobMin: CGFloat = 1.5
+    static let locomotionBobMax: CGFloat = 6.5
+
+    static let stillBreathingBob: CGFloat = 0.6
+    static let restingBob: CGFloat = 0.3
+    static let risingLeanDegrees: Double = 2
+    static let risingBob: CGFloat = 1.0
+    static let restlessShiftAmplitude: CGFloat = 1.4
+    static let recoveringResidualBob: CGFloat = 1.2
+
+    // MARK: - Figure Motion Engine — cycle rates (Hz, full L/R cycles/sec)
+
+    static let breathingCycleHz: Double = 0.12
+    static let restingCycleHz: Double = 0.08
+    static let restlessCycleHz: Double = 0.35
+    static let risingCycleHz: Double = 0.6
+    static let recoveringCycleHz: Double = 0.5
+    static let locomotionMinCycleHz: Double = 0.6
+
+    // MARK: - Figure Motion Engine — render throttling
+    //
+    // LiveAvatar picks a TimelineView refresh interval from these based on
+    // the engine's current state, so idle/resting stays cheap and only
+    // visible locomotion asks for near-frame-rate updates.
+
+    static let idleFrameInterval: Double = 1.0 / 8
+    static let transitionFrameInterval: Double = 1.0 / 24
+    static let activeFrameInterval: Double = 1.0 / 45
 }
