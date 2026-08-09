@@ -119,14 +119,21 @@ enum MotionConfig {
     /// gait parameters toward their state's target at.
     static let gaitSmoothingRate: Double = 5.0
 
-    static let strideLengthMin: CGFloat = 2
-    static let strideLengthMax: CGFloat = 11
-    static let armSwingMin: CGFloat = 1.5
-    static let armSwingMax: CGFloat = 9
+    /// Stride is peak-to-peak ground travel of one foot, in reference-box
+    /// units — not an amplitude. Rig V2 derives everything else from it.
+    static let strideLengthMin: CGFloat = 7
+    static let strideLengthMax: CGFloat = 26
+    /// Arm swing is now an angle in degrees from vertical, not a length.
+    static let armSwingMin: CGFloat = 8
+    static let armSwingMax: CGFloat = 26
     static let forwardLeanMin: Double = 1
     static let forwardLeanMax: Double = 7
-    static let locomotionBobMin: CGFloat = 1.5
-    static let locomotionBobMax: CGFloat = 6.5
+    /// Residual breathing bob during locomotion. The visible vertical
+    /// travel while moving is derived from stance geometry (see
+    /// FigureGait.pelvisY), not from these — they only keep a trace of
+    /// life in the body at very low intensity.
+    static let locomotionBobMin: CGFloat = 0.5
+    static let locomotionBobMax: CGFloat = 0.9
 
     static let stillBreathingBob: CGFloat = 0.6
     static let restingBob: CGFloat = 0.3
@@ -152,5 +159,104 @@ enum MotionConfig {
 
     static let idleFrameInterval: Double = 1.0 / 8
     static let transitionFrameInterval: Double = 1.0 / 24
-    static let activeFrameInterval: Double = 1.0 / 45
+    static let activeFrameInterval: Double = 1.0 / 55
+
+    // MARK: - Figure Rig V2 — skeleton proportions
+    //
+    // All in the 120×120 reference box, same as the legacy FigureShape, so
+    // the rig and the old static poses stay visually consistent in scale.
+
+    /// Where the implied floor sits. Never rendered outside Figure Lab.
+    static let groundY: CGFloat = 112
+    /// The ankle joint rides slightly above the floor; the foot segment
+    /// bridges the gap. This is the plane leg IK actually targets.
+    static let ankleHeight: CGFloat = 3
+    static var anklePlaneY: CGFloat { groundY - ankleHeight }
+
+    static let thighLength: CGFloat = 20.5
+    static let shinLength: CGFloat = 20.5
+    static var legLength: CGFloat { thighLength + shinLength }
+    static let toeLength: CGFloat = 5.5
+
+    static let upperArmLength: CGFloat = 15
+    static let lowerArmLength: CGFloat = 13
+
+    static let hipSpread: CGFloat = 12
+    /// Feet track closer to the midline than the hips do — this is most of
+    /// what stops a two-legged line figure reading as a pair of compasses.
+    static let stanceWidth: CGFloat = 9
+    static let shoulderSpread: CGFloat = 18
+    static let torsoLength: CGFloat = 24
+    static let neckLength: CGFloat = 12
+    static let headOffset: CGFloat = 10
+    static let figureHeadRadius: CGFloat = 8
+
+    // MARK: - Figure Rig V2 — gait mechanics
+
+    /// Stance fraction of the cycle. Above 0.5 a foot is always down
+    /// (walking); below it a flight phase opens (running).
+    static let walkDutyFactor: Double = 0.62
+    static let runDutyFactor: Double = 0.34
+
+    /// Baseline hip-to-ankle shortening, as a fraction of full leg length —
+    /// keeps the knee from ever locking dead straight.
+    static let baseStanceFlexion: Double = 0.02
+    /// Extra midstance knee flexion. Small for walking so the compass
+    /// effect dominates and the pelvis peaks at midstance; large for
+    /// running so absorption wins and it troughs there instead.
+    static let walkStanceKneeFlexion: Double = 0.006
+    static let runStanceKneeFlexion: Double = 0.10
+    /// Peak extra pelvis rise during flight, at full running.
+    static let flightRiseGain: CGFloat = 5.5
+
+    /// Foot lift during swing, as a fraction of stride.
+    static let walkSwingHeightRatio: CGFloat = 0.16
+    static let runSwingHeightRatio: CGFloat = 0.34
+
+    /// Foot pitch in degrees; positive drives the toe down.
+    static let footContactPitch: Double = -6
+    static let footToeOffPitch: Double = 18
+
+    // MARK: - Figure Rig V2 — torso, head, arms
+
+    /// Peak pelvis tilt in degrees at full stride.
+    static let pelvisObliquityDegrees: Double = 4
+    /// How much the shoulder line counter-rotates against the pelvis.
+    static let shoulderCounterRotationGain: Double = 0.55
+    /// Lateral bow of the spine curve, in units, at full counter-rotation.
+    static let spineCurveGain: CGFloat = 2.2
+
+    /// Fraction of pelvis vertical travel the head is allowed to inherit.
+    /// Below 1 the head is calmer than the hips, as in real gait; well
+    /// above 0 so it still reads as attached to the body.
+    static let headFollow: CGFloat = 0.4
+    static let shoulderFollow: CGFloat = 0.7
+
+    /// Forearm phase lag behind the upper arm, as a fraction of a cycle.
+    static let armLagFraction: Double = 0.06
+    static let walkElbowFlexDegrees: Double = 22
+    static let runElbowFlexDegrees: Double = 78
+    static let elbowFlexVariationDegrees: Double = 10
+
+    // MARK: - Figure Rig V2 — walk/run blend inputs
+
+    static let runBlendCadenceLow: Double = 138
+    static let runBlendCadenceHigh: Double = 172
+    static let runBlendIntensityLow: Double = 0.55
+    static let runBlendIntensityHigh: Double = 0.9
+
+    // MARK: - Figure Rig V2 — postural detail
+
+    /// Lateral pelvis shift used by RISING and RESTLESS to read as a
+    /// transfer of weight rather than a step.
+    static let risingWeightShift: CGFloat = 1.8
+    static let restlessWeightShift: CGFloat = 1.5
+    /// RISING settles the pelvis by this much as weight is taken — an
+    /// intent cue, deliberately far short of a crouch.
+    static let risingPelvisSettle: CGFloat = 1.2
+
+    /// Reduce Motion freezes the cycle here instead of wherever it happened
+    /// to be. Phase 0 is the contact frame: one foot forward, one back,
+    /// both grounded — the cleanest single frame that still reads as gait.
+    static let reducedMotionCanonicalPhase: Double = 0
 }

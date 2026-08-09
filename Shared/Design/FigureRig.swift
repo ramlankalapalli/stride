@@ -1,20 +1,25 @@
 import CoreGraphics
+import Foundation
 
-// Phase 1.1A — Figure Motion Engine, part 1: the rig.
+// Phase 1.1A / Figure Rig V2 — joint assembly.
 //
-// A minimal procedural joint skeleton for the Figure. Replaces the idea of
-// "poses" with a small set of joints whose positions are a pure function of
-// continuous gait parameters — so WALKING/BRISK/RUNNING are never separate
-// artwork, just different coordinates in this same parameter space.
+// FigureGait holds the biomechanics; this file is the part that turns them
+// into a set of points to draw. Order matters and is the whole design:
 //
-// Deliberately not anatomically detailed: this stays a minimal athletic line
-// sculpture, matching the existing hand-drawn Figure's proportions (same
-// 120×120 reference box, same rough joint placements as the old FigureShape
-// standing pose) rather than a realistic body rig.
+//   ground plane → feet → pelvis (from the loaded leg) → knees (IK)
+//                       → torso → shoulders → arms (FK) → head
 //
-// No CoreMotion, no SwiftUI, no Combine — pure math, unit-testable headless.
+// V1 ran that chain in reverse — hips first, feet as an offset from them —
+// which is why its feet floated, its legs stretched and its knees never
+// really bent. Nothing here is allowed to move a planted foot.
+//
+// Deliberately still an abstract movement glyph: more joints exist
+// internally than are visible, and the rendered silhouette stays a handful
+// of strokes (see RigFigureShape in AvatarView.swift).
+//
+// No CoreMotion, no SwiftUI, no Combine — pure math, testable headless.
 
-/// The full set of rendered joint positions for one instant, in the 120×120
+/// The full set of joint positions for one instant, in the 120×120
 /// reference box (same convention as the legacy `FigureShape`).
 struct FigureJoints: Equatable {
     var head: CGPoint
@@ -27,137 +32,235 @@ struct FigureJoints: Equatable {
     var rightElbow: CGPoint
     var leftHand: CGPoint
     var rightHand: CGPoint
+    /// Control point for the spine curve between hip centre and neck.
+    var spineControl: CGPoint
     var hipCenter: CGPoint
     var leftHip: CGPoint
     var rightHip: CGPoint
     var leftKnee: CGPoint
     var rightKnee: CGPoint
-    var leftFoot: CGPoint
-    var rightFoot: CGPoint
+    var leftAnkle: CGPoint
+    var rightAnkle: CGPoint
+    var leftToe: CGPoint
+    var rightToe: CGPoint
+    /// Whether each foot is currently bearing weight. Not rendered — used
+    /// by tests and the internal-testing Figure Lab readout.
+    var leftPlanted: Bool
+    var rightPlanted: Bool
 }
 
-/// Continuous drive parameters for the rig. These are the *only* inputs that
-/// change what gets drawn — there is no discrete "pose" selector here. The
-/// postural state machine (`FigureMotionEngine`) is what decides where these
-/// parameters should be heading at any moment; the rig just renders them.
+/// Continuous drive parameters for the rig. There is still no discrete
+/// "pose" selector: the postural state machine (`FigureMotionEngine`)
+/// decides where these should be heading, and the rig renders wherever they
+/// currently are.
 struct FigureGaitParameters: Equatable {
-    /// 0...1 position within the current gait cycle. Meaningless at energy 0.
+    /// 0...1 position within the current gait cycle.
     var phase: Double
     /// Clamped 0...1 read of how hard the figure is currently moving.
     var intensity: Double
-    /// How far each foot swings from center, in reference-box units.
+    /// Peak-to-peak ground travel of one foot, in reference-box units.
     var strideLength: CGFloat
-    /// Informational — steps/minute driving the cycle rate during locomotion.
+    /// Informational — steps/minute driving the cycle rate.
     var cadence: Double
-    /// Forward lean, in degrees, sheared around the hip.
+    /// Forward lean in degrees, applied as a true rotation about the hip.
     var forwardLean: Double
-    /// How far each hand swings from its shoulder, in reference-box units.
+    /// Peak shoulder swing angle in degrees from vertical.
     var armSwing: CGFloat
-    /// Vertical bob amplitude, in reference-box units.
+    /// Residual breathing amplitude. Visible vertical travel during
+    /// locomotion is derived from stance geometry, not from this.
     var verticalBob: CGFloat
-    /// 0...1 overall "how alive" — scales knee bend / gait crispness.
+    /// 0...1 overall "how alive" — scales gait detail toward stillness.
     var energy: Double
+    /// 0 = walking mechanics, 1 = running mechanics. Continuous.
+    var runBlend: Double
+    /// Lateral pelvis shift, for weight transfer without taking a step.
+    var weightShift: CGFloat
 
     static let neutral = FigureGaitParameters(
         phase: 0, intensity: 0, strideLength: 0, cadence: 0,
-        forwardLean: 0, armSwing: 0, verticalBob: 0, energy: 0
+        forwardLean: 0, armSwing: 0, verticalBob: 0, energy: 0,
+        runBlend: 0, weightShift: 0
     )
 }
 
 enum FigureRig {
     /// Matches the legacy FigureShape's reference box exactly, so both
-    /// systems scale/center identically inside any frame.
+    /// systems scale/centre identically inside any frame.
     static let referenceSize: CGFloat = 120
 
     private static let centerX: CGFloat = 60
-    private static let hipY: CGFloat = 68
-    private static let shoulderY: CGFloat = 44
-    private static let neckY: CGFloat = 32
-    private static let headCenterY: CGFloat = 22
-    private static let headRadius: CGFloat = 8
 
-    private static let shoulderSpread: CGFloat = 18
-    private static let hipSpread: CGFloat = 12
-    private static let upperArmLength: CGFloat = 16
-    private static let lowerArmLength: CGFloat = 14
-    private static let thighLength: CGFloat = 22
-    private static let shinLength: CGFloat = 22
-    /// How much extra knee bend energy adds at the peak of a stride —
-    /// a hint of athletic drive at high energy, never a deep crouch.
-    private static let maxKneeLift: CGFloat = 8
-
-    /// Derive the full joint set for one instant from continuous parameters.
-    /// Pure function — same input always produces the same output.
+    /// Derive the full joint set for one instant. Pure function — same
+    /// input always produces the same output.
     static func joints(for p: FigureGaitParameters) -> FigureJoints {
-        let cycle = p.phase * 2 * .pi
+        let phase = FigureGait.normalizedPhase(p.phase)
+        let energy = FigureGait.clamp01(p.energy)
+        let runBlend = FigureGait.clamp01(p.runBlend)
+        let stride = max(0, p.strideLength)
+        let duty = FigureGait.dutyFactor(runBlend: runBlend)
+        let swingHeight = FigureGait.swingHeight(stride: stride, runBlend: runBlend)
 
-        // Legs swing opposite each other; the bob is a double-frequency lift
-        // (both feet pass under the hip twice per full stride cycle).
-        let leftLegSwing = CGFloat(sin(cycle)) * p.strideLength
-        let rightLegSwing = CGFloat(sin(cycle + .pi)) * p.strideLength
-        let bob = CGFloat(abs(cos(cycle))) * p.verticalBob
+        // 1. Feet, against the ground. Right leads the cycle; left is half
+        //    a cycle behind it, which is what makes the gait alternate.
+        let rightFoot = FigureGait.footState(footPhase: phase, duty: duty,
+                                             stride: stride, swingHeight: swingHeight)
+        let leftFoot = FigureGait.footState(footPhase: phase + 0.5, duty: duty,
+                                            stride: stride, swingHeight: swingHeight)
 
-        // Arms swing opposite their same-side leg.
-        let leftArmSwing = CGFloat(sin(cycle + .pi)) * p.armSwing
-        let rightArmSwing = CGFloat(sin(cycle)) * p.armSwing
+        let rightAnkleBase = CGPoint(x: centerX + MotionConfig.stanceWidth / 2,
+                                     y: MotionConfig.anklePlaneY)
+        let leftAnkleBase = CGPoint(x: centerX - MotionConfig.stanceWidth / 2,
+                                    y: MotionConfig.anklePlaneY)
+        let rightAnkle = CGPoint(x: rightAnkleBase.x + rightFoot.offset.x,
+                                 y: rightAnkleBase.y + rightFoot.offset.y)
+        let leftAnkle = CGPoint(x: leftAnkleBase.x + leftFoot.offset.x,
+                                y: leftAnkleBase.y + leftFoot.offset.y)
 
-        let leanRadians = p.forwardLean * .pi / 180
+        // 2. Pelvis, from whichever leg is loaded — never chosen freely, so
+        //    a planted foot can't be pulled off the floor.
+        let mechanicalPelvisY = FigureGait.pelvisY(phase: phase, duty: duty, stride: stride,
+                                                   runBlend: runBlend, energy: energy)
+        let breathing = -p.verticalBob * CGFloat(0.5 - 0.5 * cos(2 * .pi * phase))
+        let pelvisY = mechanicalPelvisY + breathing
+        let hipCenter = CGPoint(x: centerX + p.weightShift, y: pelvisY)
 
-        let hipCenter = CGPoint(x: centerX, y: hipY - bob)
-        let shoulderCenter = CGPoint(x: centerX, y: shoulderY - bob)
-        let neck = CGPoint(x: centerX, y: neckY - bob)
-        let headCenter = CGPoint(x: centerX, y: headCenterY - bob)
+        // 3. Pelvis obliquity — the swing-side hip drops a little, so the
+        //    hip line stops being a rigid horizontal bar.
+        let strideNorm = MotionConfig.strideLengthMax > 0
+            ? min(1, Double(stride / MotionConfig.strideLengthMax)) : 0
+        let obliquity = MotionConfig.pelvisObliquityDegrees * strideNorm * energy * sin(2 * .pi * phase)
+        let (leftHip, rightHip) = spanEndpoints(center: hipCenter,
+                                                width: MotionConfig.hipSpread,
+                                                tiltDegrees: obliquity)
 
-        let leftShoulder = CGPoint(x: shoulderCenter.x - shoulderSpread / 2, y: shoulderCenter.y)
-        let rightShoulder = CGPoint(x: shoulderCenter.x + shoulderSpread / 2, y: shoulderCenter.y)
-        let leftHip = CGPoint(x: hipCenter.x - hipSpread / 2, y: hipCenter.y)
-        let rightHip = CGPoint(x: hipCenter.x + hipSpread / 2, y: hipCenter.y)
+        // 4. Torso. The head keeps only part of the pelvis's vertical
+        //    travel, so it stays the calmest point on the body without
+        //    detaching — the spine absorbs the difference, which is exactly
+        //    what a spine does.
+        let reference = FigureGait.referencePelvisY(stride: stride)
+        let deviation = mechanicalPelvisY - reference
+        let shoulderY = pelvisY - MotionConfig.torsoLength - deviation * (1 - MotionConfig.shoulderFollow)
+        let neckY = pelvisY - MotionConfig.torsoLength - MotionConfig.neckLength
+            - deviation * (1 - MotionConfig.headFollow)
+        let headY = neckY - MotionConfig.headOffset
 
-        let leftElbow = CGPoint(x: leftShoulder.x + leftArmSwing * 0.6, y: leftShoulder.y + upperArmLength)
-        let rightElbow = CGPoint(x: rightShoulder.x + rightArmSwing * 0.6, y: rightShoulder.y + upperArmLength)
-        let leftHand = CGPoint(x: leftElbow.x + leftArmSwing, y: leftElbow.y + lowerArmLength)
-        let rightHand = CGPoint(x: rightElbow.x + rightArmSwing, y: rightElbow.y + lowerArmLength)
-
-        let kneeLift = CGFloat(p.energy) * maxKneeLift
-        let leftKnee = CGPoint(
-            x: leftHip.x + leftLegSwing * 0.5,
-            y: leftHip.y + thighLength - kneeLift * CGFloat(abs(sin(cycle)))
+        let counterRotation = -MotionConfig.shoulderCounterRotationGain * obliquity
+        let shoulderCenter = CGPoint(x: hipCenter.x, y: shoulderY)
+        let (leftShoulder, rightShoulder) = spanEndpoints(center: shoulderCenter,
+                                                          width: MotionConfig.shoulderSpread,
+                                                          tiltDegrees: counterRotation)
+        let neck = CGPoint(x: hipCenter.x, y: neckY)
+        let headCenter = CGPoint(x: hipCenter.x, y: headY)
+        // Bow the spine away from the shoulder twist so the torso reads as
+        // a curve responding to the stride, not a drawn rectangle.
+        let spineControl = CGPoint(
+            x: hipCenter.x + MotionConfig.spineCurveGain * CGFloat(counterRotation / max(1, MotionConfig.pelvisObliquityDegrees)),
+            y: (hipCenter.y + neckY) / 2
         )
-        let rightKnee = CGPoint(
-            x: rightHip.x + rightLegSwing * 0.5,
-            y: rightHip.y + thighLength - kneeLift * CGFloat(abs(sin(cycle + .pi)))
-        )
-        let leftFoot = CGPoint(x: leftHip.x + leftLegSwing, y: leftKnee.y + shinLength)
-        let rightFoot = CGPoint(x: rightHip.x + rightLegSwing, y: rightKnee.y + shinLength)
 
-        func lean(_ point: CGPoint) -> CGPoint {
-            // Shear around the hip: points above the hip move forward with
-            // lean, points at/below it don't — this reads as the torso
-            // leaning while the feet stay planted, not the whole figure
-            // sliding sideways.
-            let dy = hipCenter.y - point.y
-            guard dy > 0 else { return point }
-            return CGPoint(x: point.x + dy * CGFloat(sin(leanRadians)), y: point.y)
-        }
+        // 5. Knees, by IK from hip to the already-placed ankle.
+        let rightLeg = FigureGait.solveTwoBone(root: rightHip, target: rightAnkle,
+                                               upper: MotionConfig.thighLength,
+                                               lower: MotionConfig.shinLength,
+                                               bendSign: 1)
+        let leftLeg = FigureGait.solveTwoBone(root: leftHip, target: leftAnkle,
+                                              upper: MotionConfig.thighLength,
+                                              lower: MotionConfig.shinLength,
+                                              bendSign: 1)
+
+        // 6. Arms, forward kinematics with a real elbow. Each arm swings
+        //    against its same-side leg; the forearm trails slightly so it
+        //    stops reading as one rigid pendulum.
+        let elbowFlexBase = MotionConfig.walkElbowFlexDegrees
+            + runBlend * (MotionConfig.runElbowFlexDegrees - MotionConfig.walkElbowFlexDegrees)
+        let rightArm = arm(shoulder: rightShoulder, phase: phase, swingDegrees: Double(p.armSwing),
+                           flexBase: elbowFlexBase, energy: energy, sign: 1)
+        let leftArm = arm(shoulder: leftShoulder, phase: phase, swingDegrees: Double(p.armSwing),
+                          flexBase: elbowFlexBase, energy: energy, sign: -1)
+
+        // 7. Feet. A short segment forward of each ankle — the smallest
+        //    mark that reads as contact with a floor.
+        let rightToe = toe(from: rightAnkle, pitchDegrees: rightFoot.pitch)
+        let leftToe = toe(from: leftAnkle, pitchDegrees: leftFoot.pitch)
+
+        // 8. Lean, as a true rotation of everything above the pelvis. V1
+        //    sheared instead, which skewed the torso and left the hands
+        //    behind whenever the elbows moved.
+        let lean = p.forwardLean * .pi / 180
+        func leaned(_ point: CGPoint) -> CGPoint { rotate(point, about: hipCenter, radians: lean) }
 
         return FigureJoints(
-            head: lean(headCenter),
-            headRadius: headRadius,
-            neck: lean(neck),
-            shoulderCenter: lean(shoulderCenter),
-            leftShoulder: lean(leftShoulder),
-            rightShoulder: lean(rightShoulder),
-            leftElbow: lean(leftElbow),
-            rightElbow: lean(rightElbow),
-            leftHand: lean(leftHand),
-            rightHand: lean(rightHand),
+            head: leaned(headCenter),
+            headRadius: MotionConfig.figureHeadRadius,
+            neck: leaned(neck),
+            shoulderCenter: leaned(shoulderCenter),
+            leftShoulder: leaned(leftShoulder),
+            rightShoulder: leaned(rightShoulder),
+            leftElbow: leaned(leftArm.joint),
+            rightElbow: leaned(rightArm.joint),
+            leftHand: leaned(leftArm.end),
+            rightHand: leaned(rightArm.end),
+            spineControl: leaned(spineControl),
             hipCenter: hipCenter,
             leftHip: leftHip,
             rightHip: rightHip,
-            leftKnee: leftKnee,
-            rightKnee: rightKnee,
-            leftFoot: leftFoot,
-            rightFoot: rightFoot
+            leftKnee: leftLeg.joint,
+            rightKnee: rightLeg.joint,
+            leftAnkle: leftLeg.end,
+            rightAnkle: rightLeg.end,
+            leftToe: leftToe,
+            rightToe: rightToe,
+            leftPlanted: leftFoot.planted,
+            rightPlanted: rightFoot.planted
         )
+    }
+
+    // MARK: - Helpers
+
+    /// Endpoints of a hip or shoulder line of the given width, tilted about
+    /// its own centre.
+    private static func spanEndpoints(center: CGPoint, width: CGFloat,
+                                      tiltDegrees: Double) -> (left: CGPoint, right: CGPoint) {
+        let radians = tiltDegrees * .pi / 180
+        let dx = width / 2 * CGFloat(cos(radians))
+        let dy = width / 2 * CGFloat(sin(radians))
+        return (CGPoint(x: center.x - dx, y: center.y - dy),
+                CGPoint(x: center.x + dx, y: center.y + dy))
+    }
+
+    /// One arm. `sign` is +1 for the right arm, -1 for the left, which is
+    /// what puts each arm in opposition to its same-side leg.
+    private static func arm(shoulder: CGPoint, phase: Double, swingDegrees: Double,
+                            flexBase: Double, energy: Double, sign: Double) -> FigureGait.TwoBoneSolution {
+        let swing = -sign * swingDegrees * cos(2 * .pi * phase)
+        let lagged = phase - MotionConfig.armLagFraction
+        let laggedSwing = -sign * swingDegrees * cos(2 * .pi * lagged)
+        let variation = MotionConfig.elbowFlexVariationDegrees * energy
+            * (0.5 - 0.5 * cos(2 * .pi * lagged) * sign)
+        let flex = flexBase * max(0.25, energy) + variation
+
+        let upperRadians = swing * .pi / 180
+        let elbow = CGPoint(x: shoulder.x + MotionConfig.upperArmLength * CGFloat(sin(upperRadians)),
+                            y: shoulder.y + MotionConfig.upperArmLength * CGFloat(cos(upperRadians)))
+        let forearmRadians = (laggedSwing + flex) * .pi / 180
+        let hand = CGPoint(x: elbow.x + MotionConfig.lowerArmLength * CGFloat(sin(forearmRadians)),
+                           y: elbow.y + MotionConfig.lowerArmLength * CGFloat(cos(forearmRadians)))
+        return FigureGait.TwoBoneSolution(joint: elbow, end: hand)
+    }
+
+    private static func toe(from ankle: CGPoint, pitchDegrees: Double) -> CGPoint {
+        let radians = pitchDegrees * .pi / 180
+        return CGPoint(x: ankle.x + MotionConfig.toeLength * CGFloat(cos(radians)),
+                       y: ankle.y + MotionConfig.toeLength * CGFloat(sin(radians)))
+    }
+
+    private static func rotate(_ point: CGPoint, about pivot: CGPoint, radians: Double) -> CGPoint {
+        guard radians != 0 else { return point }
+        let dx = point.x - pivot.x
+        let dy = point.y - pivot.y
+        let c = CGFloat(cos(radians))
+        let s = CGFloat(sin(radians))
+        return CGPoint(x: pivot.x + dx * c - dy * s,
+                       y: pivot.y + dx * s + dy * c)
     }
 }
