@@ -44,7 +44,10 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True)
     p.add_argument("--anim", required=True)
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", required=False)
+    p.add_argument("--diagnose", action="store_true",
+                   help="Report per-frame foot/hip behaviour instead of exporting. "
+                        "Use this before changing anything about the motion.")
     return p.parse_args(argv)
 
 
@@ -229,6 +232,59 @@ def retarget(src_arm, tgt_arm, action):
           f"= {(end - start + 1) / TARGET_FPS:.4f}s loop")
 
 
+def sole_heights(tgt_arm):
+    """Lowest shoe vertex per frame, in world space."""
+    shoes = next((o for o in bpy.context.scene.objects
+                  if o.type == "MESH" and "shoe" in o.name.lower()), None)
+    if shoes is None:
+        return {}
+    scene = bpy.context.scene
+    out = {}
+    for frame in range(scene.frame_start, scene.frame_end + 1):
+        scene.frame_set(frame)
+        deps = bpy.context.evaluated_depsgraph_get()
+        ev = shoes.evaluated_get(deps)
+        mesh = ev.to_mesh()
+        out[frame] = min((ev.matrix_world @ v.co).z for v in mesh.vertices)
+        ev.to_mesh_clear()
+    return out
+
+
+def ground_align(tgt_arm):
+    """Sit the character on the floor instead of through it.
+
+    Measured on the retargeted result, the sole spends most of the cycle a
+    couple of millimetres under z=0 and briefly dips ~2.4cm below during
+    toe-off. That dip is inherent to the donor clip — the retarget
+    reproduces the donor's own foot height to within 0.1mm — and it happens
+    because Avaturn's shoe is a different shape from the foot the clip was
+    authored on, so an identical ankle angle buries more of the sole.
+
+    Correcting it per frame would mean clamping the deepest point to zero
+    every frame, and because the deepest point hands off between feet that
+    curve jumps ~2.2cm in two frames — a visible pop, worse than the problem.
+
+    So this applies one constant offset instead, chosen so the *typical*
+    contact height lands exactly on the floor. The brief dips stay slightly
+    below, where the floor and contact shadow hide them, and the frames that
+    matter read as planted. No animation curve is modified; this is a single
+    translation of the whole rig.
+    """
+    heights = sole_heights(tgt_arm)
+    if not heights:
+        print("[ground] no shoe mesh — skipping alignment")
+        return
+    values = sorted(heights.values())
+    median = values[len(values) // 2]
+    tgt_arm.location.z -= median
+    bpy.context.view_layer.update()
+    print(f"[ground] sole range {min(values):+.4f}..{max(values):+.4f}m, "
+          f"median {median:+.4f}m -> raised rig by {-median:+.4f}m")
+    after = sole_heights(tgt_arm)
+    print(f"[ground] after: {min(after.values()):+.4f}..{max(after.values()):+.4f}m "
+          "(negative = below floor, hidden by the shadow)")
+
+
 def export_usdz(path):
     bpy.ops.wm.usd_export(
         filepath=path,
@@ -261,6 +317,151 @@ def export_usdz(path):
     print(f"[export] wrote {path}")
 
 
+def diagnose_source(src_arm, tgt_arm):
+    """Is the donor clip itself planted?
+
+    This separates "the retarget broke contact" from "the source was never
+    clean". Both rigs are measured hip-relative and normalised by their own
+    hip-to-ankle length, so the two are directly comparable despite the
+    donor being ~6% larger and in centimetres.
+    """
+    scene = bpy.context.scene
+    start, end = scene.frame_start, scene.frame_end
+    sw, tw = src_arm.matrix_world, tgt_arm.matrix_world
+
+    src_reach = ((sw @ src_arm.data.bones["Hips"].matrix_local).translation
+                 - (sw @ src_arm.data.bones["LeftFoot"].matrix_local).translation).length
+    tgt_reach = ((tw @ tgt_arm.data.bones["Hips"].matrix_local).translation
+                 - (tw @ tgt_arm.data.bones["LeftFoot"].matrix_local).translation).length
+    print(f"\n=== DONOR vs RETARGET (hip-to-ankle: donor {src_reach:.4f}m, "
+          f"target {tgt_reach:.4f}m, ratio {tgt_reach / src_reach:.4f}) ===")
+    print("frame | donor Lankle.z  Rankle.z | target Lankle.z Rankle.z")
+
+    donor_lo, tgt_lo = [], []
+    for frame in range(start, end + 1):
+        scene.frame_set(frame)
+        sl = (sw @ src_arm.pose.bones["LeftFoot"].matrix).translation.z
+        sr = (sw @ src_arm.pose.bones["RightFoot"].matrix).translation.z
+        tl = (tw @ tgt_arm.pose.bones["LeftFoot"].matrix).translation.z
+        tr = (tw @ tgt_arm.pose.bones["RightFoot"].matrix).translation.z
+        donor_lo.append(min(sl, sr))
+        tgt_lo.append(min(tl, tr))
+        print(f"{frame:5d} | {sl:+.4f} {sr:+.4f} | {tl:+.4f} {tr:+.4f}")
+
+    print(f"\ndonor  lowest-ankle range: {min(donor_lo):+.4f}..{max(donor_lo):+.4f} "
+          f"span {max(donor_lo) - min(donor_lo):.4f} m")
+    print(f"target lowest-ankle range: {min(tgt_lo):+.4f}..{max(tgt_lo):+.4f} "
+          f"span {max(tgt_lo) - min(tgt_lo):.4f} m")
+    print("If the donor span is already large, the clip was never a planted "
+          "walk and no retarget setting will fix it.")
+
+
+def diagnose(tgt_arm):
+    """Measure how the retargeted feet actually behave, in world space.
+
+    The question this answers is whether the planted foot holds a constant
+    height and a *constant* backward speed. Constant backward speed is what
+    an in-place clip should look like — the foot is stationary and the
+    ground is conceptually moving under it. Speed that varies through
+    contact is real slippage, and reads as the character skating.
+    """
+    scene = bpy.context.scene
+    start, end = scene.frame_start, scene.frame_end
+    w = tgt_arm.matrix_world
+
+    def world(bone, frame):
+        return (w @ tgt_arm.pose.bones[bone].matrix).translation
+
+    samples = {}
+    for frame in range(start, end + 1):
+        scene.frame_set(frame)
+        samples[frame] = {
+            "hips": world("Hips", frame),
+            "LeftFoot": world("LeftFoot", frame),
+            "RightFoot": world("RightFoot", frame),
+            "LeftToeBase": world("LeftToeBase", frame),
+            "RightToeBase": world("RightToeBase", frame),
+        }
+
+    print("\n=== FOOT / HIP DIAGNOSTIC (world space, metres, Z up) ===")
+    print("frame |  hips.z | Lfoot.z Ltoe.z | Rfoot.z Rtoe.z | Lspeed  Rspeed  (horiz m/frame)")
+    prev = None
+    lspeeds, rspeeds = [], []
+    for frame in range(start, end + 1):
+        s = samples[frame]
+        if prev is None:
+            ls = rs = 0.0
+        else:
+            ls = ((s["LeftToeBase"].x - prev["LeftToeBase"].x) ** 2 +
+                  (s["LeftToeBase"].y - prev["LeftToeBase"].y) ** 2) ** 0.5
+            rs = ((s["RightToeBase"].x - prev["RightToeBase"].x) ** 2 +
+                  (s["RightToeBase"].y - prev["RightToeBase"].y) ** 2) ** 0.5
+            lspeeds.append((frame, ls, s["LeftToeBase"].z))
+            rspeeds.append((frame, rs, s["RightToeBase"].z))
+        print(f"{frame:5d} | {s['hips'].z:+.4f} | {s['LeftFoot'].z:+.4f} {s['LeftToeBase'].z:+.4f} "
+              f"| {s['RightFoot'].z:+.4f} {s['RightToeBase'].z:+.4f} | {ls:.4f}  {rs:.4f}")
+        prev = s
+
+    toe_z = [samples[f]["LeftToeBase"].z for f in samples] + \
+            [samples[f]["RightToeBase"].z for f in samples]
+    floor = min(toe_z)
+    print(f"\nlowest toe height over cycle : {floor:+.4f} m  (this is the effective floor)")
+    print(f"highest toe height over cycle: {max(toe_z):+.4f} m")
+
+    # Stance = toe within 1cm of the floor.
+    band = floor + 0.01
+    for label, speeds in (("LEFT", lspeeds), ("RIGHT", rspeeds)):
+        stance = [(f, sp) for f, sp, z in speeds if z <= band]
+        if not stance:
+            print(f"{label}: no stance frames detected")
+            continue
+        vals = [sp for _, sp in stance]
+        lo, hi = min(vals), max(vals)
+        mean = sum(vals) / len(vals)
+        spread = (hi - lo) / mean if mean else 0
+        print(f"{label} stance: {len(stance)} frames, horiz speed "
+              f"min={lo:.4f} max={hi:.4f} mean={mean:.4f} m/frame, "
+              f"variation={spread * 100:.0f}% of mean")
+
+    hips_z = [samples[f]["hips"].z for f in samples]
+    hips_y = [samples[f]["hips"].y for f in samples]
+    print(f"\nhips vertical  : {min(hips_z):+.4f}..{max(hips_z):+.4f}  span {max(hips_z)-min(hips_z):.4f} m")
+    print(f"hips fore/aft  : {min(hips_y):+.4f}..{max(hips_y):+.4f}  span {max(hips_y)-min(hips_y):.4f} m"
+          "   <- residual surge left behind by the linear ramp")
+
+    # Bones are not the contact surface. What the eye actually judges is the
+    # lowest point of the shoe geometry, so measure that against the floor.
+    shoes = next((o for o in bpy.context.scene.objects
+                  if o.type == "MESH" and "shoe" in o.name.lower()), None)
+    if shoes is None:
+        print("\n(no shoe mesh found — skipping sole contact measurement)")
+        return
+
+    deps = bpy.context.evaluated_depsgraph_get()
+    print("\n=== SOLE CONTACT (lowest shoe vertex per frame) ===")
+    lows = []
+    for frame in range(start, end + 1):
+        scene.frame_set(frame)
+        deps = bpy.context.evaluated_depsgraph_get()
+        ev = shoes.evaluated_get(deps)
+        mesh = ev.to_mesh()
+        mw = ev.matrix_world
+        low = min((mw @ v.co).z for v in mesh.vertices)
+        ev.to_mesh_clear()
+        lows.append((frame, low))
+
+    floor_v = min(l for _, l in lows)
+    top_v = max(l for _, l in lows)
+    print(f"lowest sole point over cycle : {floor_v:+.4f} m")
+    print(f"highest 'lowest sole' point  : {top_v:+.4f} m")
+    print(f"=> the supporting foot rises and falls by {top_v - floor_v:.4f} m across the cycle")
+    print("   (a genuinely planted walk holds this near constant; a large")
+    print("    value is the character bobbing off its own floor)")
+    for frame, low in lows:
+        bar = "#" * max(0, int(round((low - floor_v) * 500)))
+        print(f"  f{frame:>3}  {low:+.4f}  {bar}")
+
+
 def main():
     args = parse_args()
     reset_scene()
@@ -270,9 +471,16 @@ def main():
         raise SystemExit("animation file contained no action")
     retarget(src_arm, tgt_arm, action)
 
+    if args.diagnose:
+        diagnose_source(src_arm, tgt_arm)
+        diagnose(tgt_arm)
+        return
+
     # The donor rig must not ship inside the runtime asset.
     bpy.data.objects.remove(src_arm, do_unlink=True)
-
+    ground_align(tgt_arm)
+    if not args.out:
+        raise SystemExit("--out is required unless --diagnose is given")
     export_usdz(args.out)
 
 

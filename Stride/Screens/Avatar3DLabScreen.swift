@@ -6,6 +6,8 @@
 import SwiftUI
 import RealityKit
 import Combine
+import CoreGraphics
+import UIKit
 
 // Phase 1.1B prototype — 3D Avatar Lab.
 //
@@ -31,17 +33,23 @@ private enum AvatarCamera: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Framing a ~1.7 m character standing at the origin, aimed at chest
-    /// height so the walk reads without the head crowding the top edge.
+    /// Pulled back and shot long (see `fieldOfView`). The wider, closer
+    /// setup read like a model viewer: perspective divergence made the
+    /// nearer leg balloon and the figure sat in the frame like a specimen.
+    /// A longer lens from further away compresses the body the way product
+    /// and athletic photography does, and framing the figure large makes it
+    /// the subject rather than an exhibit.
     var position: SIMD3<Float> {
         switch self {
-        case .front:        return [0.0, 1.05, 2.95]
-        case .threeQuarter: return [2.05, 1.20, 2.15]
-        case .side:         return [2.95, 1.05, 0.05]
+        case .front:        return [0.00, 0.88, 3.85]
+        case .threeQuarter: return [2.58, 0.98, 2.85]
+        case .side:         return [3.85, 0.88, 0.02]
         }
     }
 
-    var target: SIMD3<Float> { [0, 0.95, 0] }
+    /// Aimed at the hips rather than the chest, with the camera sitting a
+    /// little below it — the eye reads a slight upward angle as presence.
+    var target: SIMD3<Float> { [0, 0.98, 0] }
 }
 
 private enum PlaybackSpeed: Float, CaseIterable, Identifiable {
@@ -88,52 +96,120 @@ private final class AvatarScene: ObservableObject {
     private func buildStage() {
         let anchor = AnchorEntity(world: .zero)
 
-        // Three-point lighting. Enough shaping for the body to read as
-        // solid, deliberately short of anything theatrical.
+        // The default non-AR environment lights the scene fairly evenly,
+        // which on a black background flattens the body into a silhouette.
+        // Pulling the ambient down lets the three lights below do the
+        // shaping, so form reads instead of outline.
+        arView.environment.lighting.intensityExponent = -0.6
+
+        // Key: high and to camera-left. Carries the face and the front of
+        // the torso, and is the only light casting a shadow.
         let key = DirectionalLight()
-        key.light.intensity = 3200
-        key.light.color = .white
-        key.shadow = DirectionalLightComponent.Shadow(maximumDistance: 4, depthBias: 1.5)
-        key.look(at: [0, 0.9, 0], from: [-1.7, 2.7, 2.3], relativeTo: nil)
+        key.light.intensity = 5200
+        key.light.color = .init(white: 1.0, alpha: 1)
+        key.shadow = DirectionalLightComponent.Shadow(maximumDistance: 6, depthBias: 1.2)
+        key.look(at: [0, 1.0, 0], from: [-1.9, 3.0, 2.6], relativeTo: nil)
 
+        // Fill: opposite the key, deliberately weak. Enough to keep the
+        // shadow side from going to pure black, not enough to flatten it.
         let fill = DirectionalLight()
-        fill.light.intensity = 900
-        fill.light.color = .init(white: 0.85, alpha: 1)
+        fill.light.intensity = 850
+        fill.light.color = .init(white: 0.82, alpha: 1)
         fill.shadow = nil
-        fill.look(at: [0, 1.0, 0], from: [2.4, 1.5, 1.8], relativeTo: nil)
+        fill.look(at: [0, 1.05, 0], from: [2.7, 1.4, 1.9], relativeTo: nil)
 
-        // Separates the silhouette from a near-black background, which is
-        // most of what stops a dark scene reading as flat.
-        let rim = DirectionalLight()
-        rim.light.intensity = 1400
-        rim.light.color = .init(white: 0.95, alpha: 1)
-        rim.shadow = nil
-        rim.look(at: [0, 1.1, 0], from: [-0.8, 1.9, -2.6], relativeTo: nil)
+        // Two rims from behind, one per side. This is what actually
+        // separates a dark figure from a black background — a single back
+        // light leaves one edge buried, and the silhouette breaks up.
+        let rimLeft = DirectionalLight()
+        rimLeft.light.intensity = 3000
+        rimLeft.light.color = .init(white: 0.97, alpha: 1)
+        rimLeft.shadow = nil
+        rimLeft.look(at: [0, 1.15, 0], from: [-2.3, 2.0, -2.4], relativeTo: nil)
+
+        let rimRight = DirectionalLight()
+        rimRight.light.intensity = 2100
+        rimRight.light.color = .init(white: 0.94, alpha: 1)
+        rimRight.shadow = nil
+        rimRight.look(at: [0, 1.15, 0], from: [2.5, 1.9, -2.2], relativeTo: nil)
 
         anchor.addChild(key)
         anchor.addChild(fill)
-        anchor.addChild(rim)
+        anchor.addChild(rimLeft)
+        anchor.addChild(rimRight)
         anchor.addChild(contactShadow())
 
-        camera.camera.fieldOfViewInDegrees = 38
+        camera.camera.fieldOfViewInDegrees = 30
         anchor.addChild(camera)
         apply(camera: .threeQuarter)
 
         arView.scene.addAnchor(anchor)
     }
 
-    /// A small dark disc directly under the feet. Not a cast shadow — just
-    /// enough contact to stop the character reading as floating, and small
-    /// enough that it never becomes scenery.
+    /// Soft contact shadow under the feet.
+    ///
+    /// The first version was a hard-edged rounded rectangle, which reads as
+    /// a sticker on the floor rather than as shadow — and because an
+    /// in-place walk slides its planted foot backwards, a crisp static
+    /// shape is exactly the reference that makes the sliding obvious. A
+    /// radial falloff has no edge to slide against, so it grounds the
+    /// figure without advertising the treadmill.
+    ///
+    /// Sized to the stride footprint rather than to one foot, since both
+    /// feet travel through it over a cycle.
     private func contactShadow() -> ModelEntity {
+        let mesh = MeshResource.generatePlane(width: 1.05, depth: 0.78)
         var material = UnlitMaterial(color: .black)
-        material.blending = .transparent(opacity: 0.55)
-        let disc = ModelEntity(
-            mesh: .generatePlane(width: 0.62, depth: 0.42, cornerRadius: 0.21),
-            materials: [material]
-        )
-        disc.position = [0, 0.001, 0]
-        return disc
+        material.blending = .transparent(opacity: 0.85)
+
+        if let texture = Self.radialFalloffTexture() {
+            material.color = .init(tint: .white, texture: .init(texture))
+        }
+
+        let shadow = ModelEntity(mesh: mesh, materials: [material])
+        // Just above the floor so it never z-fights with geometry that
+        // dips slightly below during toe-off.
+        shadow.position = [0, 0.002, 0]
+        return shadow
+    }
+
+    /// Black disc fading to fully transparent at the rim, drawn once at
+    /// startup. Premultiplied so the edge fades out rather than towards
+    /// grey.
+    private static func radialFalloffTexture() -> TextureResource? {
+        let size = 256
+        let bytesPerRow = size * 4
+        var pixels = [UInt8](repeating: 0, count: size * bytesPerRow)
+        let centre = Float(size - 1) / 2
+
+        for y in 0..<size {
+            for x in 0..<size {
+                let dx = (Float(x) - centre) / centre
+                let dy = (Float(y) - centre) / centre
+                let distance = min(1, sqrt(dx * dx + dy * dy))
+                // Squared falloff, then eased — keeps a denser core under
+                // the feet with a long soft tail.
+                let falloff = powf(1 - distance, 2.2)
+                let alpha = UInt8(max(0, min(255, falloff * 255)))
+                let offset = y * bytesPerRow + x * 4
+                pixels[offset] = 0      // premultiplied black
+                pixels[offset + 1] = 0
+                pixels[offset + 2] = 0
+                pixels[offset + 3] = alpha
+            }
+        }
+
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let image = CGImage(
+                width: size, height: size,
+                bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: true,
+                intent: .defaultIntent)
+        else { return nil }
+
+        return try? TextureResource.generate(from: image, options: .init(semantic: .color))
     }
 
     func apply(camera angle: AvatarCamera) {
