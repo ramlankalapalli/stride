@@ -78,6 +78,18 @@ struct ProfileScreen: View {
             }
             .buttonStyle(.plain)
             Hairline()
+
+            Button { router.push(.avatar3DLab) } label: {
+                HStack {
+                    Text("3D Avatar Lab (debug)")
+                        .font(Type.archivo(15, .medium))
+                        .foregroundStyle(Color.dim)
+                    Spacer()
+                }
+                .padding(.vertical, 16)
+            }
+            .buttonStyle(.plain)
+            Hairline()
             #endif
 
             Spacer(minLength: 0)

@@ -36,6 +36,8 @@ enum Route: Hashable {
     // Never reachable in a normal release build; see FigureLabScreen.swift.
     #if DEBUG || STRIDE_INTERNAL_TESTING
     case figureLab
+    /// Phase 1.1B prototype — see Avatar3DLabScreen.swift.
+    case avatar3DLab
     #endif
 }
 

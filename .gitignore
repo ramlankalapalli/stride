@@ -17,3 +17,12 @@ xcuserdata/
 
 # Fonts — not redistributed, see README for the Google Fonts download step
 Stride/Resources/Fonts/*.ttf
+
+# Avatar 3D prototype source assets — deliberately NOT committed.
+# This repo is public; the Avaturn model may be a likeness, and Mixamo's
+# licence permits using animations in a project but is restrictive about
+# redistributing the raw animation files as standalone assets. Keep these
+# locally and point Tools/Avatar3D/convert_avatar.py at them; only the
+# generated runtime USDZ is version-controlled.
+PrototypeAssets/Avatar3D/*.glb
+PrototypeAssets/Avatar3D/*.fbx

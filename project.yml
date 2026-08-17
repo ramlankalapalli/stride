@@ -21,6 +21,12 @@ targets:
     sources:
       - path: Stride
       - path: Shared
+      # Phase 1.1B prototype only — the animated Avaturn/Mixamo USDZ used by
+      # the internal-testing 3D Avatar Lab. Explicitly a resource: XcodeGen
+      # has no build-phase rule for .usdz and would otherwise have to guess.
+      # Only in the app target; the widget has no use for it.
+      - path: PrototypeAssets
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ramlankalapalli.stride
